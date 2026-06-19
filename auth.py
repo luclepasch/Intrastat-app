@@ -153,6 +153,30 @@ def logout() -> None:
         st.session_state.pop(key, None)
 
 
+def change_password(user_id: int, current_password: str,
+                    new_password: str) -> tuple[bool, str]:
+    """Change le mot de passe de l'utilisateur après vérification de l'actuel."""
+    user = db.get_user_by_id(user_id)
+    if not user:
+        return False, "Utilisateur introuvable."
+    if not verify_password(current_password, user["password_hash"]):
+        return False, "Le mot de passe actuel est incorrect."
+    if not _valid_password(new_password):
+        return False, f"Le nouveau mot de passe doit contenir au moins {MIN_PASSWORD_LEN} caractères."
+    if verify_password(new_password, user["password_hash"]):
+        return False, "Le nouveau mot de passe doit être différent de l'actuel."
+    db.update_password(user_id, hash_password(new_password))
+    return True, "Mot de passe modifié avec succès."
+
+
+def update_profile_name(user_id: int, full_name: str) -> tuple[bool, str]:
+    """Met à jour le nom complet de l'utilisateur et la session."""
+    db.update_full_name(user_id, full_name)
+    if st.session_state.get("user_id") == user_id:
+        st.session_state["full_name"] = full_name.strip()
+    return True, "Profil mis à jour."
+
+
 # --------------------------------------------------------------------------- #
 # État de session
 # --------------------------------------------------------------------------- #

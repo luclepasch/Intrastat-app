@@ -34,6 +34,7 @@ st.set_page_config(
 import auth          # noqa: E402
 import database as db  # noqa: E402
 from admin import render_admin  # noqa: E402
+from user_profile import render_profile  # noqa: E402
 
 APP_FILE = "plante_sante_app.py"  # application métier à protéger
 
@@ -76,13 +77,11 @@ with st.sidebar:
     st.caption(f"Rôle : **{user['role']}**  ·  {user['email']}")
     st.divider()
 
-    page = "Application"
+    options = ["🌿 Application", "👤 Mon profil"]
     if user["role"] == "ADMIN":
-        page = st.radio(
-            "Navigation",
-            ["🌿 Application", "🛠️ Administration"],
-            key="nav_page",
-        )
+        options.append("🛠️ Administration")
+    page = st.radio("Navigation", options, key="nav_page")
+    if user["role"] == "ADMIN":
         # Indicateur de la base de données active (visible par les ADMIN)
         st.caption(f"🗄️ Base : **{db.BACKEND}**")
 
@@ -94,7 +93,10 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 # Routage
 # --------------------------------------------------------------------------- #
-if user["role"] == "ADMIN" and st.session_state.get("nav_page") == "🛠️ Administration":
+page = st.session_state.get("nav_page", "🌿 Application")
+if page == "🛠️ Administration" and user["role"] == "ADMIN":
     render_admin()
+elif page == "👤 Mon profil":
+    render_profile()
 else:
     run_app()

@@ -192,6 +192,11 @@ def update_password(user_id: int, password_hash: str) -> None:
          (password_hash, _now(), user_id))
 
 
+def update_full_name(user_id: int, full_name: str) -> None:
+    _run("UPDATE users SET full_name = ?, updated_at = ? WHERE id = ?",
+         (full_name.strip(), _now(), user_id))
+
+
 def update_last_login(user_id: int) -> None:
     _run("UPDATE users SET last_login_at = ? WHERE id = ?", (_now(), user_id))
 
