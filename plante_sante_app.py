@@ -38,6 +38,8 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
+VERSION = "1.3"
+VERSION_DATE = "juin 2026"
 
 st.markdown(
     """
@@ -570,3 +572,14 @@ if photos:
             st.error("La réponse de l'IA n'a pas pu être interprétée. Réessayez avec d'autres photos.")
 else:
     st.info("👆 Ajoutez au moins une photo pour démarrer l'analyse.")
+
+# Pied de page — version
+st.markdown(
+    f"""
+    <div style="text-align:center; margin-top:2.5rem; color:#7a9c83;
+                font-size:.8rem; font-weight:600;">
+      🌿 Plant Doctor · v{VERSION} — {VERSION_DATE} · propulsé par Claude
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
