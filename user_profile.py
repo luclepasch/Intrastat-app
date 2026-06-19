@@ -35,8 +35,8 @@ def render_profile() -> None:
         f"**Dernière connexion :** {user.get('last_login_at') or '—'}"
     )
 
-    # Quota d'analyses
-    st.markdown("### 📊 Quota d'analyses")
+    # Formule & quota d'analyses
+    st.markdown(f"### 💳 Formule : {user.get('plan') or 'FREE'}")
     st.write(quotas.quota_caption(user["id"]) or "Illimité")
 
     st.divider()

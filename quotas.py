@@ -20,6 +20,28 @@ import database as db
 PERIODES = ("day", "week", "month", "year")
 LABELS = {"day": "jour", "week": "semaine", "month": "mois", "year": "an"}
 
+# Trois plans d'abonnement avec des quotas d'analyses différents (0 = illimité).
+PLANS = ("FREE", "STANDARD", "PREMIUM")
+PLAN_DEFAULTS = {
+    "FREE":     {"day": 3,  "week": 10,  "month": 30,  "year": 200},
+    "STANDARD": {"day": 20, "week": 120, "month": 400, "year": 3000},
+    "PREMIUM":  {"day": 0,  "week": 0,   "month": 0,   "year": 0},  # illimité
+}
+
+
+def plan_limits(plan: str) -> dict:
+    """Quotas d'un plan (surchargés par PLAN_<PLAN>_<PERIODE> si défini)."""
+    plan = plan if plan in PLAN_DEFAULTS else "FREE"
+    base = PLAN_DEFAULTS[plan]
+    out = {}
+    for p in PERIODES:
+        v = db.get_config(f"PLAN_{plan}_{p.upper()}")
+        try:
+            out[p] = int(v) if v not in (None, "") else base[p]
+        except ValueError:
+            out[p] = base[p]
+    return out
+
 
 def _cfg_int(key: str):
     """Lit un entier de configuration ; None si absent/vide/≤0."""
@@ -43,12 +65,20 @@ def _config_defaults() -> dict:
 
 
 def effective_limits(user: dict) -> dict:
-    """Limites effectives par période (int) ou None (illimité)."""
-    defaults = _config_defaults()
+    """Limites effectives par période (int) ou None (illimité).
+
+    Priorité : quota explicite de l'utilisateur > quota du plan > défaut global.
+    """
+    gdefaults = _config_defaults()
+    plimits = plan_limits(user.get("plan") or "FREE")
     out = {}
     for p in PERIODES:
         col = user.get(f"quota_{p}")
-        base = int(col) if col not in (None, "") else defaults[p]
+        if col not in (None, ""):
+            base = int(col)
+        else:
+            pv = plimits.get(p)
+            base = pv if pv is not None else gdefaults[p]
         out[p] = base if (base and base > 0) else None
     return out
 

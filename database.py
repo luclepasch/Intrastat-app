@@ -169,14 +169,16 @@ def init_db() -> None:
             updated_at     TEXT,
             last_login_at  TEXT,
             failed_attempts INTEGER NOT NULL DEFAULT 0,
-            locked_until   TEXT
+            locked_until   TEXT,
+            plan           TEXT DEFAULT 'FREE'
         )
         """
     )
 
-    # Colonnes de quota (ajoutées de façon idempotente pour les bases existantes)
+    # Colonnes ajoutées de façon idempotente pour les bases existantes
     for col in ("quota_day", "quota_week", "quota_month", "quota_year"):
         _safe_add_column("users", f"{col} INTEGER")
+    _safe_add_column("users", "plan TEXT DEFAULT 'FREE'")
 
     # Journal d'utilisation : une ligne par analyse effectuée
     usage_id = "id BIGSERIAL PRIMARY KEY" if _IS_PG else "id INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -219,15 +221,15 @@ def _safe_add_column(table: str, coldef: str) -> None:
 # CRUD utilisateurs
 # --------------------------------------------------------------------------- #
 def create_user(email: str, password_hash: str, full_name: str = "",
-                role: str = "USER", is_active: bool = True) -> int:
+                role: str = "USER", is_active: bool = True, plan: str = "FREE") -> int:
     """Crée un utilisateur et renvoie son id."""
     now = _now()
     _run(
-        """INSERT INTO users (email, password_hash, full_name, role, is_active,
+        """INSERT INTO users (email, password_hash, full_name, role, is_active, plan,
                               created_at, updated_at, failed_attempts)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
         (email.lower().strip(), password_hash, full_name.strip(), role,
-         1 if is_active else 0, now, now),
+         1 if is_active else 0, plan, now, now),
     )
     user = get_user_by_email(email)
     return user["id"] if user else -1
@@ -263,6 +265,16 @@ def count_users() -> int:
 def update_role(user_id: int, role: str) -> None:
     _run("UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
          (role, _now(), user_id))
+
+
+def set_user_plan(user_id: int, plan: str) -> None:
+    _run("UPDATE users SET plan = ?, updated_at = ? WHERE id = ?",
+         (plan, _now(), user_id))
+
+
+def list_pending_users() -> list[dict]:
+    """Comptes en attente de validation (inactifs)."""
+    return _run("SELECT * FROM users WHERE is_active = 0 ORDER BY id", fetch="all")
 
 
 def set_active(user_id: int, active: bool) -> None:
