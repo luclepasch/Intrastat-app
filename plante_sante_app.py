@@ -4,22 +4,23 @@
 
 Application web optimisée pour smartphone : prenez une ou plusieurs photos d'une
 plante (jusqu'à 4, sous différents angles), l'IA de vision de Claude analyse en
-détail son état de santé, propose des solutions concrètes et illustre le
-diagnostic (dessin schématique + photos d'exemples).
+détail son état de santé, propose des solutions illustrées, et permet l'historique,
+les rappels d'arrosage, l'export PDF et le choix de la langue.
 
 Lancement local :
     streamlit run plante_sante_app.py
 
-Clé API requise : définissez la variable d'environnement ANTHROPIC_API_KEY,
-ou ajoutez-la dans .streamlit/secrets.toml :
-    ANTHROPIC_API_KEY = "sk-ant-..."
+Clé API requise : ANTHROPIC_API_KEY (variable d'environnement ou .streamlit/secrets.toml).
 """
 
 import base64
 import hashlib
 import json
 import os
+import re
 import urllib.parse
+import uuid
+from datetime import datetime, timedelta
 
 import anthropic
 import streamlit as st
@@ -27,7 +28,7 @@ import streamlit.components.v1 as components
 from streamlit_back_camera_input import back_camera_input
 
 # --------------------------------------------------------------------------- #
-# Configuration de la page (mobile-first)
+# Configuration
 # --------------------------------------------------------------------------- #
 st.set_page_config(
     page_title="🌿 Plant Doctor",
@@ -38,109 +39,220 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
-VERSION = "1.7"
+MAX_HISTORIQUE = 12
+VERSION = "1.8"
 VERSION_DATE = "juin 2026"
+
+LANGUES = {"Français": "fr", "English": "en", "Deutsch": "de"}
+LANG_FULL = {"fr": "français", "en": "anglais (English)", "de": "allemand (Deutsch)"}
 
 st.markdown(
     """
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
-
       html, body, [class*="css"] { font-family: 'Nunito', sans-serif; }
-
-      /* Fond doux dégradé nature */
-      .stApp {
-        background: linear-gradient(180deg, #f4fbf5 0%, #ffffff 45%);
-      }
+      .stApp { background: linear-gradient(180deg, #f4fbf5 0%, #ffffff 45%); overflow-x: hidden; }
       .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 760px; }
-
-      /* En-tête héro */
       .hero {
         background: linear-gradient(135deg, #15803d 0%, #22c55e 55%, #4ade80 100%);
-        border-radius: 22px;
-        padding: 1.6rem 1.4rem;
-        color: #ffffff;
-        box-shadow: 0 12px 30px rgba(22, 163, 74, 0.28);
-        margin-bottom: 1.4rem;
+        border-radius: 22px; padding: 1.6rem 1.4rem; color: #fff;
+        box-shadow: 0 12px 30px rgba(22,163,74,.28); margin-bottom: 1.2rem;
       }
       .hero h1 { margin: 0; font-size: 2rem; font-weight: 800; letter-spacing: -0.5px; }
       .hero p { margin: .35rem 0 0; font-size: 1rem; opacity: .95; font-weight: 600; }
-
-      /* Boutons */
-      .stButton button {
-        width: 100%; border-radius: 14px; height: 3rem; font-size: 1.05rem;
-        font-weight: 700; border: none;
-        background: linear-gradient(135deg, #16a34a, #22c55e);
-        color: #fff; transition: transform .08s ease, box-shadow .2s ease;
-        box-shadow: 0 6px 16px rgba(22,163,74,.25);
+      .stButton button, .stDownloadButton button {
+        width: 100%; border-radius: 14px; height: 3rem; font-size: 1.05rem; font-weight: 700;
+        border: none; background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff;
+        transition: transform .08s ease, box-shadow .2s ease; box-shadow: 0 6px 16px rgba(22,163,74,.25);
       }
-      .stButton button:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(22,163,74,.35); color:#fff; }
-      .stButton button:active { transform: translateY(0); }
-
-      /* Cartes métriques */
+      .stButton button:hover, .stDownloadButton button:hover {
+        transform: translateY(-1px); box-shadow: 0 10px 22px rgba(22,163,74,.35); color:#fff;
+      }
       div[data-testid="stMetric"] {
-        background: #ffffff; border: 1px solid #d9efdd; border-radius: 16px;
+        background: #fff; border: 1px solid #d9efdd; border-radius: 16px;
         padding: .9rem .7rem; box-shadow: 0 4px 14px rgba(20,39,26,.05); text-align: center;
       }
       div[data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: 800; color: #15803d; }
       div[data-testid="stMetricLabel"] { justify-content: center; font-weight: 700; color:#436b4d; }
-
-      /* Barre de progression */
-      .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #f59e0b, #22c55e);
-      }
-
-      /* Expanders en cartes */
+      .stProgress > div > div > div > div { background: linear-gradient(90deg, #f59e0b, #22c55e); }
       [data-testid="stExpander"] {
         border: 1px solid #d9efdd; border-radius: 16px; overflow: hidden;
         box-shadow: 0 4px 14px rgba(20,39,26,.05); background:#fff; margin-bottom:.5rem;
       }
       [data-testid="stExpander"] summary { font-weight: 700; }
-
-      /* Images arrondies */
       div[data-testid="stImage"] img { border-radius: 14px; }
-
-      /* Titres de section */
       h4 { color: #15803d; font-weight: 800; margin-top: 1.3rem; }
-
-      /* Radio en pilules */
       div[role="radiogroup"] label {
         background:#fff; border:1px solid #d9efdd; border-radius:999px;
         padding:.3rem .9rem; margin-right:.4rem; font-weight:700;
       }
-
-      /* Empêche tout débordement horizontal (iframes de composants, médias) */
       iframe, img, video, svg { max-width: 100% !important; }
-      .stApp { overflow-x: hidden; }
-
-      /* ---- Adaptations smartphone ---- */
       @media (max-width: 640px) {
         .block-container { padding-left: .8rem; padding-right: .8rem; }
         .hero { padding: 1.2rem 1rem; border-radius: 18px; }
         .hero h1 { font-size: 1.55rem; }
         .hero p { font-size: .9rem; }
         h4 { font-size: 1.05rem; }
-
-        /* Cartes métriques compactes et toujours lisibles sur 3 colonnes */
         div[data-testid="stMetric"] { padding: .55rem .35rem; }
         div[data-testid="stMetricValue"] { font-size: 1.1rem; }
         div[data-testid="stMetricLabel"] p { font-size: .72rem; }
-
-        /* Les colonnes passent en pleine largeur (empilées) */
         div[data-testid="stHorizontalBlock"] { gap: .5rem; }
-        .stButton button { font-size: 1rem; height: 2.8rem; }
+        .stButton button, .stDownloadButton button { font-size: 1rem; height: 2.8rem; }
       }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+# --------------------------------------------------------------------------- #
+# Traductions
+# --------------------------------------------------------------------------- #
+T = {
+    "fr": {
+        "hero_sub": "Photographiez votre plante — l'IA diagnostique sa santé et propose des solutions illustrées.",
+        "add_hint": "**Ajoutez jusqu'à {n} photos** de la même plante (vue d'ensemble, feuilles, tiges, racines, zones abîmées…).",
+        "src_cam": "📷 Appareil photo", "src_gallery": "🖼️ Depuis la galerie",
+        "cam_caption": "📱 Sur téléphone, la caméra **arrière** est utilisée. Sur ordinateur, la webcam.",
+        "add_photo_btn": "➕ Ajouter cette photo à l'analyse", "photo_added": "Photo ajoutée ✅",
+        "photo_dup": "Photo déjà ajoutée ou maximum de {n} atteint.",
+        "choose_photos": "Choisissez une ou plusieurs photos", "photos_added": "{n} photo(s) ajoutée(s) ✅",
+        "selected": "**{n} / {max} photo(s) sélectionnée(s) :**", "remove": "🗑️ Retirer",
+        "analyze": "🔬 Analyser la plante", "clear_all": "♻️ Tout effacer",
+        "analyzing": "Analyse de {n} photo(s) en cours… 🌱",
+        "add_one": "👆 Ajoutez au moins une photo pour démarrer l'analyse.",
+        "err_auth": "Clé API invalide. Vérifiez votre `ANTHROPIC_API_KEY`.",
+        "err_rate": "Trop de requêtes. Patientez quelques instants puis réessayez.",
+        "err_api": "Erreur de l'API Claude : {e}",
+        "err_parse": "La réponse de l'IA n'a pas pu être interprétée. Réessayez avec d'autres photos.",
+        "no_plant": "🤔 Je n'ai pas reconnu de plante sur ces photos. Cadrez plus près du feuillage, avec une bonne lumière.",
+        "dl_pdf": "📄 Télécharger le diagnostic (PDF)",
+        "disclaimer": "⚠️ Diagnostic généré par une IA à titre indicatif. En cas de doute sur une plante de valeur, consultez un professionnel.",
+        "footer": "🌿 Plant Doctor · v{v} — {d} · propulsé par Claude",
+        "m_etat": "État général", "m_score": "Score de santé", "m_conf": "Confiance", "famille": "Famille",
+        "sec_illus": "🖼️ Schéma illustré", "sec_ident": "🔬 Identification & analyse détaillée",
+        "lbl_ident": "Identification :", "lbl_analyse": "Analyse :",
+        "sec_cond": "🌡️ Conditions de culture", "sec_arros": "💧 Conseils d'arrosage",
+        "f_freq": "Fréquence", "f_method": "Méthode", "f_manque": "Signes de manque d'eau", "f_exces": "Signes d'excès d'eau",
+        "sec_lum": "☀️ Exposition à la lumière", "f_expo": "Exposition idéale", "f_empl": "Emplacement",
+        "f_duree": "Durée / intensité", "f_eviter": "À éviter", "f_mauvais_ecl": "Signes d'un mauvais éclairage",
+        "lbl_temp": "🌡️ Température / humidité :", "sec_eng": "🧪 Fertilisation / engrais",
+        "f_type": "Type recommandé", "f_periode": "Période", "f_precaut": "Précautions",
+        "sec_sub": "🪴 Substrats conseillés & déconseillés", "f_melange": "Mélange idéal",
+        "f_conseilles": "Conseillés :", "f_aeviter2": "À éviter :",
+        "sec_taille": "✂️ Taille & rempotage", "f_taille": "Taille", "f_rempotage": "Rempotage", "f_periode_ideale": "Période idéale",
+        "sec_prob": "🔍 Problèmes détectés", "no_prob": "Aucun problème majeur détecté. Belle plante ! 🌟",
+        "lbl_gravite": "Gravité", "lbl_sympt": "Symptômes :", "lbl_cause": "Cause probable :", "lbl_trait": "Traitement :",
+        "see_examples": "📷 Voir des photos d'exemples de « {q} »",
+        "sec_plan": "💊 Plan d'action prioritaire", "sec_prev": "🛡️ Conseils de prévention",
+        "sec_routine": "🗓️ Routine d'entretien", "sec_astuces": "👵 Astuces de grand-mère",
+        "astuces_cap": "Remèdes naturels et traditionnels, à utiliser avec modération.",
+        "see_reference": "🌿 Voir des photos de référence de « {q} »",
+        "sec_reminder": "🔔 Rappel d'arrosage",
+        "reminder_hint": "Créez un rappel récurrent à ajouter au calendrier de votre téléphone.",
+        "reminder_every": "Arroser tous les (jours) :", "dl_ics": "🔔 Télécharger le rappel (.ics)", "water_event": "💧 Arroser",
+        "sec_hist": "📅 Historique des analyses", "hist_review": "Revoir", "hist_clear": "🗑️ Vider l'historique",
+    },
+    "en": {
+        "hero_sub": "Photograph your plant — the AI diagnoses its health and suggests illustrated solutions.",
+        "add_hint": "**Add up to {n} photos** of the same plant (whole view, leaves, stems, roots, damaged areas…).",
+        "src_cam": "📷 Camera", "src_gallery": "🖼️ From gallery",
+        "cam_caption": "📱 On phones the **rear** camera is used. On computers, the webcam.",
+        "add_photo_btn": "➕ Add this photo to the analysis", "photo_added": "Photo added ✅",
+        "photo_dup": "Photo already added or maximum of {n} reached.",
+        "choose_photos": "Choose one or more photos", "photos_added": "{n} photo(s) added ✅",
+        "selected": "**{n} / {max} photo(s) selected:**", "remove": "🗑️ Remove",
+        "analyze": "🔬 Analyze the plant", "clear_all": "♻️ Clear all",
+        "analyzing": "Analyzing {n} photo(s)… 🌱",
+        "add_one": "👆 Add at least one photo to start the analysis.",
+        "err_auth": "Invalid API key. Check your `ANTHROPIC_API_KEY`.",
+        "err_rate": "Too many requests. Please wait a moment and try again.",
+        "err_api": "Claude API error: {e}",
+        "err_parse": "The AI response could not be parsed. Try again with other photos.",
+        "no_plant": "🤔 I couldn't recognize a plant in these photos. Frame closer to the foliage, with good lighting.",
+        "dl_pdf": "📄 Download the diagnosis (PDF)",
+        "disclaimer": "⚠️ AI-generated diagnosis for guidance only. If in doubt about a valuable plant, consult a professional.",
+        "footer": "🌿 Plant Doctor · v{v} — {d} · powered by Claude",
+        "m_etat": "Overall state", "m_score": "Health score", "m_conf": "Confidence", "famille": "Family",
+        "sec_illus": "🖼️ Illustrated diagram", "sec_ident": "🔬 Identification & detailed analysis",
+        "lbl_ident": "Identification:", "lbl_analyse": "Analysis:",
+        "sec_cond": "🌡️ Growing conditions", "sec_arros": "💧 Watering tips",
+        "f_freq": "Frequency", "f_method": "Method", "f_manque": "Signs of under-watering", "f_exces": "Signs of over-watering",
+        "sec_lum": "☀️ Light exposure", "f_expo": "Ideal exposure", "f_empl": "Placement",
+        "f_duree": "Duration / intensity", "f_eviter": "Avoid", "f_mauvais_ecl": "Signs of poor lighting",
+        "lbl_temp": "🌡️ Temperature / humidity:", "sec_eng": "🧪 Fertilization",
+        "f_type": "Recommended type", "f_periode": "Period", "f_precaut": "Precautions",
+        "sec_sub": "🪴 Recommended & discouraged substrates", "f_melange": "Ideal mix",
+        "f_conseilles": "Recommended:", "f_aeviter2": "Avoid:",
+        "sec_taille": "✂️ Pruning & repotting", "f_taille": "Pruning", "f_rempotage": "Repotting", "f_periode_ideale": "Ideal period",
+        "sec_prob": "🔍 Detected problems", "no_prob": "No major problem detected. Nice plant! 🌟",
+        "lbl_gravite": "Severity", "lbl_sympt": "Symptoms:", "lbl_cause": "Likely cause:", "lbl_trait": "Treatment:",
+        "see_examples": "📷 See example photos of “{q}”",
+        "sec_plan": "💊 Priority action plan", "sec_prev": "🛡️ Prevention tips",
+        "sec_routine": "🗓️ Care routine", "sec_astuces": "👵 Grandma's tips",
+        "astuces_cap": "Natural and traditional remedies, to use in moderation.",
+        "see_reference": "🌿 See reference photos of “{q}”",
+        "sec_reminder": "🔔 Watering reminder",
+        "reminder_hint": "Create a recurring reminder to add to your phone's calendar.",
+        "reminder_every": "Water every (days):", "dl_ics": "🔔 Download the reminder (.ics)", "water_event": "💧 Water",
+        "sec_hist": "📅 Analysis history", "hist_review": "View again", "hist_clear": "🗑️ Clear history",
+    },
+    "de": {
+        "hero_sub": "Fotografieren Sie Ihre Pflanze — die KI diagnostiziert ihre Gesundheit und schlägt illustrierte Lösungen vor.",
+        "add_hint": "**Fügen Sie bis zu {n} Fotos** derselben Pflanze hinzu (Gesamtansicht, Blätter, Stängel, Wurzeln, beschädigte Stellen…).",
+        "src_cam": "📷 Kamera", "src_gallery": "🖼️ Aus der Galerie",
+        "cam_caption": "📱 Auf dem Handy wird die **Rückkamera** verwendet. Am Computer die Webcam.",
+        "add_photo_btn": "➕ Dieses Foto zur Analyse hinzufügen", "photo_added": "Foto hinzugefügt ✅",
+        "photo_dup": "Foto bereits hinzugefügt oder Maximum von {n} erreicht.",
+        "choose_photos": "Wählen Sie ein oder mehrere Fotos", "photos_added": "{n} Foto(s) hinzugefügt ✅",
+        "selected": "**{n} / {max} Foto(s) ausgewählt:**", "remove": "🗑️ Entfernen",
+        "analyze": "🔬 Pflanze analysieren", "clear_all": "♻️ Alles löschen",
+        "analyzing": "Analysiere {n} Foto(s)… 🌱",
+        "add_one": "👆 Fügen Sie mindestens ein Foto hinzu, um die Analyse zu starten.",
+        "err_auth": "Ungültiger API-Schlüssel. Prüfen Sie `ANTHROPIC_API_KEY`.",
+        "err_rate": "Zu viele Anfragen. Bitte warten Sie kurz und versuchen Sie es erneut.",
+        "err_api": "Claude-API-Fehler: {e}",
+        "err_parse": "Die KI-Antwort konnte nicht verarbeitet werden. Versuchen Sie es mit anderen Fotos.",
+        "no_plant": "🤔 Auf diesen Fotos konnte ich keine Pflanze erkennen. Fotografieren Sie näher am Laub, bei gutem Licht.",
+        "dl_pdf": "📄 Diagnose herunterladen (PDF)",
+        "disclaimer": "⚠️ KI-generierte Diagnose, nur als Orientierung. Im Zweifel bei wertvollen Pflanzen einen Fachmann fragen.",
+        "footer": "🌿 Plant Doctor · v{v} — {d} · powered by Claude",
+        "m_etat": "Allgemeinzustand", "m_score": "Gesundheitswert", "m_conf": "Sicherheit", "famille": "Familie",
+        "sec_illus": "🖼️ Illustriertes Schema", "sec_ident": "🔬 Identifikation & detaillierte Analyse",
+        "lbl_ident": "Identifikation:", "lbl_analyse": "Analyse:",
+        "sec_cond": "🌡️ Kulturbedingungen", "sec_arros": "💧 Gießtipps",
+        "f_freq": "Häufigkeit", "f_method": "Methode", "f_manque": "Anzeichen von Wassermangel", "f_exces": "Anzeichen von Überwässerung",
+        "sec_lum": "☀️ Lichtexposition", "f_expo": "Ideale Exposition", "f_empl": "Standort",
+        "f_duree": "Dauer / Intensität", "f_eviter": "Vermeiden", "f_mauvais_ecl": "Anzeichen schlechter Beleuchtung",
+        "lbl_temp": "🌡️ Temperatur / Luftfeuchtigkeit:", "sec_eng": "🧪 Düngung",
+        "f_type": "Empfohlener Typ", "f_periode": "Zeitraum", "f_precaut": "Vorsichtsmaßnahmen",
+        "sec_sub": "🪴 Empfohlene & ungeeignete Substrate", "f_melange": "Ideale Mischung",
+        "f_conseilles": "Empfohlen:", "f_aeviter2": "Vermeiden:",
+        "sec_taille": "✂️ Schnitt & Umtopfen", "f_taille": "Schnitt", "f_rempotage": "Umtopfen", "f_periode_ideale": "Idealer Zeitraum",
+        "sec_prob": "🔍 Erkannte Probleme", "no_prob": "Kein größeres Problem erkannt. Schöne Pflanze! 🌟",
+        "lbl_gravite": "Schweregrad", "lbl_sympt": "Symptome:", "lbl_cause": "Wahrscheinliche Ursache:", "lbl_trait": "Behandlung:",
+        "see_examples": "📷 Beispielfotos von „{q}“ ansehen",
+        "sec_plan": "💊 Prioritärer Maßnahmenplan", "sec_prev": "🛡️ Vorbeugungstipps",
+        "sec_routine": "🗓️ Pflegeroutine", "sec_astuces": "👵 Großmutters Tipps",
+        "astuces_cap": "Natürliche und traditionelle Mittel, in Maßen anwenden.",
+        "see_reference": "🌿 Referenzfotos von „{q}“ ansehen",
+        "sec_reminder": "🔔 Gießerinnerung",
+        "reminder_hint": "Erstellen Sie eine wiederkehrende Erinnerung für den Kalender Ihres Telefons.",
+        "reminder_every": "Gießen alle (Tage):", "dl_ics": "🔔 Erinnerung herunterladen (.ics)", "water_event": "💧 Gießen",
+        "sec_hist": "📅 Analyseverlauf", "hist_review": "Erneut ansehen", "hist_clear": "🗑️ Verlauf löschen",
+    },
+}
+
+
+def tr(key, **kw):
+    lang = st.session_state.get("lang", "fr")
+    s = T.get(lang, T["fr"]).get(key) or T["fr"].get(key, key)
+    return s.format(**kw) if kw else s
+
 
 # --------------------------------------------------------------------------- #
-# Récupération de la clé API
+# Clé API
 # --------------------------------------------------------------------------- #
-def get_api_key() -> str | None:
-    """Cherche la clé API dans les secrets Streamlit puis l'environnement."""
+def get_api_key():
     try:
         if "ANTHROPIC_API_KEY" in st.secrets:
             return st.secrets["ANTHROPIC_API_KEY"]
@@ -150,87 +262,42 @@ def get_api_key() -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# Schéma de sortie structurée (JSON garanti par l'API)
+# Schéma de sortie structurée
 # --------------------------------------------------------------------------- #
 SCHEMA = {
     "type": "object",
     "properties": {
-        "est_une_plante": {
-            "type": "boolean",
-            "description": "True si les images contiennent bien une plante analysable.",
-        },
-        "plante": {"type": "string", "description": "Nom commun probable (en français)."},
-        "nom_latin": {"type": "string", "description": "Nom latin/botanique, sinon chaîne vide."},
-        "famille": {"type": "string", "description": "Famille botanique, sinon chaîne vide."},
-        "etat_general": {
-            "type": "string",
-            "enum": ["Bon", "Moyen", "Mauvais", "Inconnu"],
-        },
-        "score_sante": {
-            "type": "integer",
-            "description": "Score de santé de 0 (mourante) à 100 (parfaite santé).",
-        },
-        "resume": {"type": "string", "description": "Résumé d'une à deux phrases."},
-        "identification_details": {
-            "type": "string",
-            "description": "Caractéristiques visibles ayant permis l'identification (feuilles, port, fleurs…).",
-        },
-        "analyse_detaillee": {
-            "type": "string",
-            "description": "Analyse approfondie combinant TOUTES les photos fournies (2-4 phrases riches).",
-        },
+        "est_une_plante": {"type": "boolean"},
+        "plante": {"type": "string"},
+        "nom_latin": {"type": "string"},
+        "famille": {"type": "string"},
+        "etat_general": {"type": "string", "enum": ["Bon", "Moyen", "Mauvais", "Inconnu"]},
+        "score_sante": {"type": "integer", "description": "0 (mourante) à 100 (parfaite santé)."},
+        "resume": {"type": "string"},
+        "identification_details": {"type": "string"},
+        "analyse_detaillee": {"type": "string"},
         "conditions_culture": {
             "type": "object",
-            "description": "Conseils de culture adaptés à cette plante, déduits aussi des photos.",
             "properties": {
                 "arrosage": {
                     "type": "object",
-                    "description": "Conseils d'arrosage adaptés à l'espèce et à la saison.",
                     "properties": {
-                        "frequence": {
-                            "type": "string",
-                            "description": "À quelle fréquence arroser (ex: 'tous les 7-10 jours en été').",
-                        },
-                        "methode": {
-                            "type": "string",
-                            "description": "Comment arroser (quantité, par le haut/bas, eau, drainage…).",
-                        },
-                        "signes_de_manque": {
-                            "type": "string",
-                            "description": "Signes visibles d'un manque d'eau.",
-                        },
-                        "signes_d_exces": {
-                            "type": "string",
-                            "description": "Signes visibles d'un excès d'eau / sur-arrosage.",
-                        },
+                        "frequence": {"type": "string"},
+                        "methode": {"type": "string"},
+                        "signes_de_manque": {"type": "string"},
+                        "signes_d_exces": {"type": "string"},
                     },
                     "required": ["frequence", "methode", "signes_de_manque", "signes_d_exces"],
                     "additionalProperties": False,
                 },
                 "lumiere": {
                     "type": "object",
-                    "description": "Conseils d'exposition à la lumière adaptés à l'espèce.",
                     "properties": {
-                        "exposition": {
-                            "type": "string",
-                            "description": "Exposition idéale (plein soleil, mi-ombre, lumière vive indirecte, ombre…).",
-                        },
-                        "emplacement": {
-                            "type": "string",
-                            "description": "Où placer la plante (ex: 'près d'une fenêtre orientée est').",
-                        },
-                        "duree": {
-                            "type": "string",
-                            "description": "Durée/intensité de lumière recommandée par jour.",
-                        },
-                        "a_eviter": {
-                            "type": "string",
-                            "description": "Expositions à éviter (ex: soleil direct brûlant derrière une vitre).",
-                        },
-                        "signes_mauvais_eclairage": {
-                            "type": "string",
-                            "description": "Signes d'un manque ou d'un excès de lumière.",
-                        },
+                        "exposition": {"type": "string"},
+                        "emplacement": {"type": "string"},
+                        "duree": {"type": "string"},
+                        "a_eviter": {"type": "string"},
+                        "signes_mauvais_eclairage": {"type": "string"},
                     },
                     "required": ["exposition", "emplacement", "duree", "a_eviter", "signes_mauvais_eclairage"],
                     "additionalProperties": False,
@@ -238,152 +305,98 @@ SCHEMA = {
                 "temperature_humidite": {"type": "string"},
                 "engrais": {
                     "type": "object",
-                    "description": "Conseils de fertilisation adaptés à l'espèce.",
                     "properties": {
-                        "type_recommande": {
-                            "type": "string",
-                            "description": "Type d'engrais conseillé (ex: 'engrais liquide riche en potassium').",
-                        },
-                        "frequence": {
-                            "type": "string",
-                            "description": "À quelle fréquence fertiliser (ex: 'tous les 15 jours au printemps/été').",
-                        },
-                        "periode": {
-                            "type": "string",
-                            "description": "Période de l'année où fertiliser / où s'arrêter.",
-                        },
-                        "precautions": {
-                            "type": "string",
-                            "description": "Précautions (diluer, ne pas fertiliser une plante stressée, etc.).",
-                        },
+                        "type_recommande": {"type": "string"},
+                        "frequence": {"type": "string"},
+                        "periode": {"type": "string"},
+                        "precautions": {"type": "string"},
                     },
                     "required": ["type_recommande", "frequence", "periode", "precautions"],
                     "additionalProperties": False,
                 },
                 "substrat": {
                     "type": "object",
-                    "description": "Substrats adaptés à cette plante.",
                     "properties": {
-                        "melange_ideal": {
-                            "type": "string",
-                            "description": "Composition de substrat idéale (ex: '2/3 terreau + 1/3 perlite').",
-                        },
-                        "conseilles": {
-                            "type": "array",
-                            "description": "Substrats/composants conseillés.",
-                            "items": {"type": "string"},
-                        },
-                        "deconseilles": {
-                            "type": "array",
-                            "description": "Substrats/composants à éviter.",
-                            "items": {"type": "string"},
-                        },
+                        "melange_ideal": {"type": "string"},
+                        "conseilles": {"type": "array", "items": {"type": "string"}},
+                        "deconseilles": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["melange_ideal", "conseilles", "deconseilles"],
                     "additionalProperties": False,
                 },
+                "taille_rempotage": {
+                    "type": "object",
+                    "properties": {
+                        "taille": {"type": "string", "description": "Conseils de taille (quand et comment)."},
+                        "rempotage": {"type": "string", "description": "Conseils de rempotage (fréquence, quand, comment)."},
+                        "periode_ideale": {"type": "string", "description": "Période idéale pour tailler/rempoter."},
+                    },
+                    "required": ["taille", "rempotage", "periode_ideale"],
+                    "additionalProperties": False,
+                },
             },
-            "required": ["arrosage", "lumiere", "temperature_humidite", "engrais", "substrat"],
+            "required": ["arrosage", "lumiere", "temperature_humidite", "engrais", "substrat", "taille_rempotage"],
             "additionalProperties": False,
         },
         "problemes": {
             "type": "array",
-            "description": "Problèmes détectés (maladies, parasites, carences, stress).",
             "items": {
                 "type": "object",
                 "properties": {
-                    "nom": {"type": "string", "description": "Nom court du problème."},
-                    "symptomes": {"type": "string", "description": "Symptômes précis observés sur les photos."},
-                    "cause": {"type": "string", "description": "Cause probable."},
+                    "nom": {"type": "string"},
+                    "symptomes": {"type": "string"},
+                    "cause": {"type": "string"},
                     "gravite": {"type": "string", "enum": ["Faible", "Modérée", "Élevée"]},
-                    "traitement": {
-                        "type": "array",
-                        "description": "Étapes de traitement concrètes pour ce problème.",
-                        "items": {"type": "string"},
-                    },
-                    "terme_recherche_image": {
-                        "type": "string",
-                        "description": "Terme court pour rechercher des photos d'exemples (ex: 'oïdium feuille rosier').",
-                    },
+                    "traitement": {"type": "array", "items": {"type": "string"}},
+                    "terme_recherche_image": {"type": "string"},
                 },
                 "required": ["nom", "symptomes", "cause", "gravite", "traitement", "terme_recherche_image"],
                 "additionalProperties": False,
             },
         },
-        "solutions": {
-            "type": "array",
-            "description": "Plan d'action prioritaire (du plus urgent au moins urgent).",
-            "items": {"type": "string"},
-        },
-        "prevention": {
-            "type": "array",
-            "description": "Conseils pour éviter que les problèmes reviennent.",
-            "items": {"type": "string"},
-        },
-        "calendrier_entretien": {
-            "type": "array",
-            "description": "Routine d'entretien recommandée (gestes réguliers).",
-            "items": {"type": "string"},
-        },
-        "astuces_grand_mere": {
-            "type": "array",
-            "description": (
-                "Remèdes et astuces naturels traditionnels ('de grand-mère') adaptés à cette "
-                "plante : marc de café, coquilles d'œuf, savon noir, peau de banane, eau de "
-                "cuisson, purin d'ortie, etc. Explique brièvement l'usage pour chaque astuce."
-            ),
-            "items": {"type": "string"},
+        "solutions": {"type": "array", "items": {"type": "string"}},
+        "prevention": {"type": "array", "items": {"type": "string"}},
+        "calendrier_entretien": {"type": "array", "items": {"type": "string"}},
+        "astuces_grand_mere": {"type": "array", "items": {"type": "string"}},
+        "intervalle_arrosage_jours": {
+            "type": "integer",
+            "description": "Intervalle moyen recommandé entre deux arrosages, en jours.",
         },
         "illustration_svg": {
             "type": "string",
-            "description": (
-                "Un dessin schématique SVG simple et lisible (viewBox, max ~400x360) illustrant la plante "
-                "et localisant les zones atteintes avec de courtes étiquettes en français. "
-                "SVG valide et autonome, sans script. Chaîne vide si non pertinent."
-            ),
+            "description": "Dessin SVG simple (viewBox ~400x360) localisant les zones atteintes, sans script. Vide si non pertinent.",
         },
-        "confiance": {
-            "type": "string",
-            "enum": ["Faible", "Moyenne", "Élevée"],
-            "description": "Confiance du diagnostic selon la qualité et le nombre de photos.",
-        },
+        "confiance": {"type": "string", "enum": ["Faible", "Moyenne", "Élevée"]},
     },
     "required": [
-        "est_une_plante", "plante", "nom_latin", "famille", "etat_general",
-        "score_sante", "resume", "identification_details", "analyse_detaillee",
-        "conditions_culture", "problemes", "solutions", "prevention",
-        "calendrier_entretien", "astuces_grand_mere", "illustration_svg", "confiance",
+        "est_une_plante", "plante", "nom_latin", "famille", "etat_general", "score_sante",
+        "resume", "identification_details", "analyse_detaillee", "conditions_culture",
+        "problemes", "solutions", "prevention", "calendrier_entretien", "astuces_grand_mere",
+        "intervalle_arrosage_jours", "illustration_svg", "confiance",
     ],
     "additionalProperties": False,
 }
 
-SYSTEM_PROMPT = (
-    "Tu es un expert en phytopathologie et en horticulture. À partir d'UNE OU PLUSIEURS photos "
-    "de la MÊME plante (prises sous différents angles : plante entière, feuilles, tiges, racines, "
-    "fleurs…), tu réalises un diagnostic détaillé. Croise les informations de toutes les photos "
-    "pour identifier la plante, évaluer son état de santé, et détecter maladies, parasites, "
-    "carences nutritionnelles et stress (sur-arrosage, manque de lumière, etc.). "
-    "Tu proposes des solutions concrètes, réalisables par un particulier, ainsi que "
-    "des conseils d'arrosage précis (fréquence, méthode, signes de manque/d'excès) et "
-    "des recommandations de substrats adaptés à l'espèce (mélange idéal, composants "
-    "conseillés et à éviter), des conseils d'exposition à la lumière (exposition idéale, "
-    "emplacement, durée, à éviter, signes d'un mauvais éclairage), des conseils de "
-    "fertilisation (type d'engrais, fréquence, période, précautions), ainsi que des "
-    "astuces naturelles traditionnelles ('de grand-mère') pertinentes pour cette plante. "
-    "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
-    "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
-    "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
-    "netteté, le cadrage et le nombre de photos."
-)
 
-MEDIA_TYPES = {
-    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-    "webp": "image/webp", "gif": "image/gif",
-}
+def build_system_prompt(lang: str) -> str:
+    return (
+        "Tu es un expert en phytopathologie et en horticulture. À partir d'UNE OU PLUSIEURS photos "
+        "de la MÊME plante, tu réalises un diagnostic détaillé : identification, état de santé, "
+        "maladies, parasites, carences, stress. Tu proposes des solutions concrètes, des conseils "
+        "d'arrosage, d'exposition à la lumière, de fertilisation, de substrats, de taille et de "
+        "rempotage, ainsi que des astuces naturelles traditionnelles ('de grand-mère'). "
+        "Sois précis, pédagogique et bienveillant. "
+        f"Tu rédiges TOUTES les valeurs textuelles du JSON en {LANG_FULL.get(lang, 'français')}. "
+        "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
+        "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
+        "netteté, le cadrage et le nombre de photos."
+    )
+
+
+MEDIA_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif"}
 
 
 def detecter_media_type(b: bytes) -> str:
-    """Détecte le type MIME d'une image à partir de ses premiers octets."""
     if b[:8].startswith(b"\x89PNG"):
         return "image/png"
     if b[:3] == b"\xff\xd8\xff":
@@ -395,35 +408,21 @@ def detecter_media_type(b: bytes) -> str:
     return "image/jpeg"
 
 
-def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]) -> dict:
-    """Envoie toutes les photos à Claude et renvoie le diagnostic structuré (dict)."""
+def analyser_plante(client, photos, lang):
     content = []
     for image_bytes, media_type in photos:
-        content.append(
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": base64.standard_b64encode(image_bytes).decode("utf-8"),
-                },
-            }
-        )
-    content.append(
-        {
-            "type": "text",
-            "text": (
-                f"Voici {len(photos)} photo(s) de la même plante. Analyse en détail son état de "
-                "santé en croisant toutes les images, et propose des solutions. "
-                "Suis strictement le format JSON demandé."
-            ),
-        }
-    )
-
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type,
+                       "data": base64.standard_b64encode(image_bytes).decode("utf-8")},
+        })
+    content.append({
+        "type": "text",
+        "text": f"Voici {len(photos)} photo(s) de la même plante. Analyse en détail et suis strictement le format JSON.",
+    })
     response = client.messages.create(
-        model=MODEL,
-        max_tokens=5500,
-        system=SYSTEM_PROMPT,
+        model=MODEL, max_tokens=5500,
+        system=build_system_prompt(lang),
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
         messages=[{"role": "user", "content": content}],
     )
@@ -432,27 +431,56 @@ def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]
 
 
 # --------------------------------------------------------------------------- #
-# Rendu du diagnostic
+# Helpers
 # --------------------------------------------------------------------------- #
 COULEUR_ETAT = {"Bon": "🟢", "Moyen": "🟡", "Mauvais": "🔴", "Inconnu": "⚪"}
 COULEUR_GRAVITE = {"Faible": "🟢", "Modérée": "🟡", "Élevée": "🔴"}
 
-# Remplacements pour rendre le texte compatible avec les polices PDF de base (latin-1)
-_PDF_REMP = {
-    "œ": "oe", "Œ": "OE", "æ": "ae", "—": "-", "–": "-", "’": "'", "‘": "'",
-    "“": '"', "”": '"', "…": "...", "•": "-", "→": "->", "≈": "~",
-}
+_PDF_REMP = {"œ": "oe", "Œ": "OE", "æ": "ae", "—": "-", "–": "-", "’": "'", "‘": "'",
+             "“": '"', "”": '"', "„": '"', "…": "...", "•": "-", "→": "->", "≈": "~"}
 
 
 def _pdf_txt(s) -> str:
     s = str(s)
     for k, v in _PDF_REMP.items():
         s = s.replace(k, v)
-    return s.encode("latin-1", "replace").decode("latin-1")
+    return s.encode("latin-1", "ignore").decode("latin-1").strip()
+
+
+def lien_images(terme: str) -> str:
+    return f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote_plus(terme)}"
+
+
+def extraire_jours(diag) -> int:
+    """Détermine l'intervalle d'arrosage en jours (1-60)."""
+    val = diag.get("intervalle_arrosage_jours")
+    if isinstance(val, int) and val > 0:
+        return max(1, min(60, val))
+    freq = (diag.get("conditions_culture", {}).get("arrosage", {}) or {}).get("frequence", "")
+    m = re.search(r"(\d+)", str(freq))
+    return max(1, min(60, int(m.group(1)))) if m else 7
+
+
+def generer_ics(plante: str, jours: int) -> bytes:
+    now = datetime.now()
+    start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if start < now:
+        start += timedelta(days=1)
+    dtstart = start.strftime("%Y%m%dT%H%M%S")
+    dtstamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    summary = f"{tr('water_event')} {plante}".strip()
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Plant Doctor//FR", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT", f"UID:{uuid.uuid4()}@plant-doctor", f"DTSTAMP:{dtstamp}",
+        f"DTSTART:{dtstart}", "DURATION:PT15M", f"RRULE:FREQ=DAILY;INTERVAL={jours}",
+        f"SUMMARY:{summary}", f"DESCRIPTION:Plant Doctor - {summary}",
+        "BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{summary}", "TRIGGER:PT0S", "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR",
+    ]
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 def generer_pdf(diag: dict) -> bytes:
-    """Génère une fiche PDF du diagnostic."""
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
@@ -465,7 +493,7 @@ def generer_pdf(diag: dict) -> bytes:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, h, _pdf_txt(txt), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    def titre(txt, size):
+    def titre(txt, size=13):
         pdf.set_font("Helvetica", "B", size)
         pdf.set_text_color(*vert)
         _line(txt, 8)
@@ -485,298 +513,229 @@ def generer_pdf(diag: dict) -> bytes:
         sous += f" ({diag['nom_latin']})"
     para(sous, bold=True, size=13)
     if diag.get("famille"):
-        para(f"Famille : {diag['famille']}")
-    para(
-        f"Etat : {diag.get('etat_general', '-')}   |   "
-        f"Score : {diag.get('score_sante', 0)}/100   |   "
-        f"Confiance : {diag.get('confiance', '-')}"
-    )
+        para(f"{tr('famille')} : {diag['famille']}")
+    para(f"{tr('m_etat')} : {diag.get('etat_general', '-')}   |   "
+         f"{tr('m_score')} : {diag.get('score_sante', 0)}/100   |   "
+         f"{tr('m_conf')} : {diag.get('confiance', '-')}")
     if diag.get("resume"):
         para(diag["resume"])
     pdf.ln(2)
 
     if diag.get("identification_details"):
-        titre("Identification", 13)
-        para(diag["identification_details"])
+        titre(tr("sec_ident")); para(diag["identification_details"])
     if diag.get("analyse_detaillee"):
-        titre("Analyse detaillee", 13)
         para(diag["analyse_detaillee"])
 
     cc = diag.get("conditions_culture", {})
     if cc:
-        titre("Conditions de culture", 13)
+        titre(tr("sec_cond"))
         arr = cc.get("arrosage", {})
         if isinstance(arr, dict) and any(arr.values()):
-            para("Arrosage :", bold=True)
-            for lbl, key in [("Frequence", "frequence"), ("Methode", "methode"),
-                             ("Signes de manque", "signes_de_manque"),
-                             ("Signes d'exces", "signes_d_exces")]:
-                if arr.get(key):
-                    puce(f"{lbl} : {arr[key]}")
+            para(tr("sec_arros"), bold=True)
+            for k, lbl in [("frequence", "f_freq"), ("methode", "f_method"),
+                           ("signes_de_manque", "f_manque"), ("signes_d_exces", "f_exces")]:
+                if arr.get(k):
+                    puce(f"{tr(lbl)} : {arr[k]}")
         lum = cc.get("lumiere", {})
         if isinstance(lum, dict) and any(lum.values()):
-            para("Exposition a la lumiere :", bold=True)
-            for lbl, key in [("Exposition", "exposition"), ("Emplacement", "emplacement"),
-                             ("Duree", "duree"), ("A eviter", "a_eviter"),
-                             ("Signes mauvais eclairage", "signes_mauvais_eclairage")]:
-                if lum.get(key):
-                    puce(f"{lbl} : {lum[key]}")
+            para(tr("sec_lum"), bold=True)
+            for k, lbl in [("exposition", "f_expo"), ("emplacement", "f_empl"), ("duree", "f_duree"),
+                           ("a_eviter", "f_eviter"), ("signes_mauvais_eclairage", "f_mauvais_ecl")]:
+                if lum.get(k):
+                    puce(f"{tr(lbl)} : {lum[k]}")
         if cc.get("temperature_humidite"):
-            para("Temperature / humidite :", bold=True)
-            puce(cc["temperature_humidite"])
+            para(tr("lbl_temp"), bold=True); puce(cc["temperature_humidite"])
         eng = cc.get("engrais", {})
         if isinstance(eng, dict) and any(eng.values()):
-            para("Fertilisation / engrais :", bold=True)
-            for lbl, key in [("Type recommande", "type_recommande"), ("Frequence", "frequence"),
-                             ("Periode", "periode"), ("Precautions", "precautions")]:
-                if eng.get(key):
-                    puce(f"{lbl} : {eng[key]}")
+            para(tr("sec_eng"), bold=True)
+            for k, lbl in [("type_recommande", "f_type"), ("frequence", "f_freq"),
+                           ("periode", "f_periode"), ("precautions", "f_precaut")]:
+                if eng.get(k):
+                    puce(f"{tr(lbl)} : {eng[k]}")
         sub = cc.get("substrat", {})
         if isinstance(sub, dict) and any(sub.values()):
-            para("Substrat :", bold=True)
+            para(tr("sec_sub"), bold=True)
             if sub.get("melange_ideal"):
-                puce(f"Melange ideal : {sub['melange_ideal']}")
+                puce(f"{tr('f_melange')} : {sub['melange_ideal']}")
             for s in sub.get("conseilles", []):
-                puce(f"Conseille : {s}")
+                puce(f"+ {s}")
             for s in sub.get("deconseilles", []):
-                puce(f"A eviter : {s}")
+                puce(f"- {s}")
+        ta = cc.get("taille_rempotage", {})
+        if isinstance(ta, dict) and any(ta.values()):
+            para(tr("sec_taille"), bold=True)
+            for k, lbl in [("taille", "f_taille"), ("rempotage", "f_rempotage"), ("periode_ideale", "f_periode_ideale")]:
+                if ta.get(k):
+                    puce(f"{tr(lbl)} : {ta[k]}")
 
     problemes = diag.get("problemes", [])
     if problemes:
-        titre("Problemes detectes", 13)
+        titre(tr("sec_prob"))
         for p in problemes:
-            para(f"{p.get('nom', 'Probleme')} (gravite : {p.get('gravite', '-')})", bold=True)
+            para(f"{p.get('nom', '-')} ({tr('lbl_gravite')} : {p.get('gravite', '-')})", bold=True)
             if p.get("symptomes"):
-                puce(f"Symptomes : {p['symptomes']}")
+                puce(f"{tr('lbl_sympt')} {p['symptomes']}")
             if p.get("cause"):
-                puce(f"Cause : {p['cause']}")
+                puce(f"{tr('lbl_cause')} {p['cause']}")
             for t in p.get("traitement", []):
-                puce(f"Traitement : {t}")
+                puce(f"{tr('lbl_trait')} {t}")
 
-    for cle, titre_section in [
-        ("solutions", "Plan d'action prioritaire"),
-        ("prevention", "Conseils de prevention"),
-        ("calendrier_entretien", "Routine d'entretien"),
-        ("astuces_grand_mere", "Astuces de grand-mere"),
-    ]:
+    for cle, sec in [("solutions", "sec_plan"), ("prevention", "sec_prev"),
+                     ("calendrier_entretien", "sec_routine"), ("astuces_grand_mere", "sec_astuces")]:
         items = diag.get(cle, [])
         if items:
-            titre(titre_section, 13)
+            titre(tr(sec))
             for it in items:
                 puce(it)
 
     pdf.ln(4)
     pdf.set_font("Helvetica", "I", 9)
     pdf.set_text_color(120, 120, 120)
-    pdf.multi_cell(
-        0, 5,
-        _pdf_txt(f"Plant Doctor v{VERSION} - Diagnostic genere par IA, a titre indicatif."),
-    )
+    _line(f"Plant Doctor v{VERSION}", 5)
     return bytes(pdf.output())
 
 
-def lien_images(terme: str) -> str:
-    """Construit un lien de recherche de photos d'exemples (Google Images)."""
-    q = urllib.parse.quote_plus(terme)
-    return f"https://www.google.com/search?tbm=isch&q={q}"
-
-
+# --------------------------------------------------------------------------- #
+# Affichage du diagnostic
+# --------------------------------------------------------------------------- #
 def afficher_diagnostic(diag: dict) -> None:
     if not diag.get("est_une_plante", True):
-        st.warning(
-            "🤔 Je n'ai pas reconnu de plante sur ces photos. "
-            "Essayez de cadrer plus près du feuillage, avec une bonne lumière."
-        )
+        st.warning(tr("no_plant"))
         return
 
-    plante = diag.get("plante", "Plante inconnue")
+    plante = diag.get("plante", "Plante")
     nom_latin = diag.get("nom_latin", "")
-    famille = diag.get("famille", "")
     titre = f"🪴 {plante}"
     if nom_latin:
         titre += f"  ·  *{nom_latin}*"
     st.markdown(f"### {titre}")
-    if famille:
-        st.caption(f"Famille : {famille}")
+    if diag.get("famille"):
+        st.caption(f"{tr('famille')} : {diag['famille']}")
     if diag.get("resume"):
         st.write(diag["resume"])
 
-    # Indicateurs clés
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
     etat = diag.get("etat_general", "Inconnu")
-    col1.metric("État général", f"{COULEUR_ETAT.get(etat, '⚪')} {etat}")
+    c1.metric(tr("m_etat"), f"{COULEUR_ETAT.get(etat, '⚪')} {etat}")
     score = int(diag.get("score_sante", 0))
-    col2.metric("Score de santé", f"{score}/100")
-    col3.metric("Confiance", diag.get("confiance", "—"))
+    c2.metric(tr("m_score"), f"{score}/100")
+    c3.metric(tr("m_conf"), diag.get("confiance", "—"))
     st.progress(max(0, min(100, score)) / 100)
 
-    # Illustration (dessin schématique généré par l'IA)
     svg = diag.get("illustration_svg", "").strip()
     if svg.startswith("<svg"):
-        st.markdown("#### 🖼️ Schéma illustré")
+        st.markdown(f"#### {tr('sec_illus')}")
         components.html(
-            "<div style='display:flex;justify-content:center;align-items:center;"
-            "width:100%;'>"
-            "<style>svg{width:100%;height:auto;max-width:360px;}</style>"
-            f"{svg}</div>",
+            "<div style='display:flex;justify-content:center;width:100%;'>"
+            "<style>svg{width:100%;height:auto;max-width:360px;}</style>" + svg + "</div>",
             height=340,
         )
 
-    # Identification & analyse détaillée
     if diag.get("identification_details") or diag.get("analyse_detaillee"):
-        with st.expander("🔬 Identification & analyse détaillée", expanded=True):
+        with st.expander(tr("sec_ident"), expanded=True):
             if diag.get("identification_details"):
-                st.markdown("**Identification :**")
+                st.markdown(f"**{tr('lbl_ident')}**")
                 st.write(diag["identification_details"])
             if diag.get("analyse_detaillee"):
-                st.markdown("**Analyse :**")
+                st.markdown(f"**{tr('lbl_analyse')}**")
                 st.write(diag["analyse_detaillee"])
 
-    # Conditions de culture
     cc = diag.get("conditions_culture", {})
     if cc:
-        st.markdown("#### 🌡️ Conditions de culture")
-
-        # Arrosage détaillé
+        st.markdown(f"#### {tr('sec_cond')}")
         arr = cc.get("arrosage", {})
-        if isinstance(arr, dict):
-            with st.expander("💧 Conseils d'arrosage", expanded=True):
-                if arr.get("frequence"):
-                    st.markdown(f"**Fréquence :** {arr['frequence']}")
-                if arr.get("methode"):
-                    st.markdown(f"**Méthode :** {arr['methode']}")
-                if arr.get("signes_de_manque"):
-                    st.markdown(f"🥵 **Signes de manque d'eau :** {arr['signes_de_manque']}")
-                if arr.get("signes_d_exces"):
-                    st.markdown(f"💦 **Signes d'excès d'eau :** {arr['signes_d_exces']}")
-        elif arr:
-            st.markdown(f"💧 **Arrosage :** {arr}")
-
-        # Substrat conseillé / déconseillé
+        if isinstance(arr, dict) and any(arr.values()):
+            with st.expander(tr("sec_arros"), expanded=True):
+                for k, lbl in [("frequence", "f_freq"), ("methode", "f_method"),
+                               ("signes_de_manque", "f_manque"), ("signes_d_exces", "f_exces")]:
+                    if arr.get(k):
+                        st.markdown(f"**{tr(lbl)} :** {arr[k]}")
+        lum = cc.get("lumiere", {})
+        if isinstance(lum, dict) and any(lum.values()):
+            with st.expander(tr("sec_lum"), expanded=True):
+                for k, lbl in [("exposition", "f_expo"), ("emplacement", "f_empl"), ("duree", "f_duree"),
+                               ("a_eviter", "f_eviter"), ("signes_mauvais_eclairage", "f_mauvais_ecl")]:
+                    if lum.get(k):
+                        st.markdown(f"**{tr(lbl)} :** {lum[k]}")
+        if cc.get("temperature_humidite"):
+            st.markdown(f"{tr('lbl_temp')} {cc['temperature_humidite']}")
+        eng = cc.get("engrais", {})
+        if isinstance(eng, dict) and any(eng.values()):
+            with st.expander(tr("sec_eng"), expanded=True):
+                for k, lbl in [("type_recommande", "f_type"), ("frequence", "f_freq"),
+                               ("periode", "f_periode"), ("precautions", "f_precaut")]:
+                    if eng.get(k):
+                        st.markdown(f"**{tr(lbl)} :** {eng[k]}")
         sub = cc.get("substrat", {})
-        if isinstance(sub, dict):
-            with st.expander("🪴 Substrats conseillés & déconseillés", expanded=True):
+        if isinstance(sub, dict) and any(sub.values()):
+            with st.expander(tr("sec_sub"), expanded=True):
                 if sub.get("melange_ideal"):
-                    st.markdown(f"🌱 **Mélange idéal :** {sub['melange_ideal']}")
+                    st.markdown(f"🌱 **{tr('f_melange')} :** {sub['melange_ideal']}")
                 if sub.get("conseilles"):
-                    st.markdown("✅ **Conseillés :**")
+                    st.markdown(f"✅ **{tr('f_conseilles')}**")
                     for s in sub["conseilles"]:
                         st.markdown(f"- {s}")
                 if sub.get("deconseilles"):
-                    st.markdown("🚫 **À éviter :**")
+                    st.markdown(f"🚫 **{tr('f_aeviter2')}**")
                     for s in sub["deconseilles"]:
                         st.markdown(f"- {s}")
-        elif sub:
-            st.markdown(f"🪴 **Substrat :** {sub}")
+        ta = cc.get("taille_rempotage", {})
+        if isinstance(ta, dict) and any(ta.values()):
+            with st.expander(tr("sec_taille"), expanded=True):
+                for k, lbl in [("taille", "f_taille"), ("rempotage", "f_rempotage"), ("periode_ideale", "f_periode_ideale")]:
+                    if ta.get(k):
+                        st.markdown(f"**{tr(lbl)} :** {ta[k]}")
 
-        # Exposition à la lumière
-        lum = cc.get("lumiere", {})
-        if isinstance(lum, dict):
-            with st.expander("☀️ Exposition à la lumière", expanded=True):
-                if lum.get("exposition"):
-                    st.markdown(f"**Exposition idéale :** {lum['exposition']}")
-                if lum.get("emplacement"):
-                    st.markdown(f"📍 **Emplacement :** {lum['emplacement']}")
-                if lum.get("duree"):
-                    st.markdown(f"⏱️ **Durée / intensité :** {lum['duree']}")
-                if lum.get("a_eviter"):
-                    st.markdown(f"🚫 **À éviter :** {lum['a_eviter']}")
-                if lum.get("signes_mauvais_eclairage"):
-                    st.markdown(f"🔎 **Signes d'un mauvais éclairage :** {lum['signes_mauvais_eclairage']}")
-        elif lum:
-            st.markdown(f"☀️ **Lumière :** {lum}")
-
-        # Température / humidité
-        st.markdown(f"🌡️ **Température / humidité :** {cc.get('temperature_humidite', '—')}")
-
-        # Fertilisation / engrais
-        eng = cc.get("engrais", {})
-        if isinstance(eng, dict) and any(eng.values()):
-            with st.expander("🧪 Fertilisation / engrais", expanded=True):
-                if eng.get("type_recommande"):
-                    st.markdown(f"**Type recommandé :** {eng['type_recommande']}")
-                if eng.get("frequence"):
-                    st.markdown(f"**Fréquence :** {eng['frequence']}")
-                if eng.get("periode"):
-                    st.markdown(f"📅 **Période :** {eng['periode']}")
-                if eng.get("precautions"):
-                    st.markdown(f"⚠️ **Précautions :** {eng['precautions']}")
-
-    # Problèmes détectés
     problemes = diag.get("problemes", [])
-    st.markdown("#### 🔍 Problèmes détectés")
+    st.markdown(f"#### {tr('sec_prob')}")
     if not problemes:
-        st.success("Aucun problème majeur détecté. Belle plante ! 🌟")
+        st.success(tr("no_prob"))
     else:
         for p in problemes:
             icone = COULEUR_GRAVITE.get(p.get("gravite", ""), "⚪")
-            with st.expander(f"{icone} {p.get('nom', 'Problème')}  ·  Gravité : {p.get('gravite', '—')}"):
+            with st.expander(f"{icone} {p.get('nom', '-')}  ·  {tr('lbl_gravite')} : {p.get('gravite', '—')}"):
                 if p.get("symptomes"):
-                    st.markdown(f"**Symptômes :** {p['symptomes']}")
+                    st.markdown(f"**{tr('lbl_sympt')}** {p['symptomes']}")
                 if p.get("cause"):
-                    st.markdown(f"**Cause probable :** {p['cause']}")
-                traitement = p.get("traitement", [])
-                if traitement:
-                    st.markdown("**Traitement :**")
-                    for t in traitement:
+                    st.markdown(f"**{tr('lbl_cause')}** {p['cause']}")
+                if p.get("traitement"):
+                    st.markdown(f"**{tr('lbl_trait')}**")
+                    for t in p["traitement"]:
                         st.markdown(f"- {t}")
                 terme = p.get("terme_recherche_image") or p.get("nom", "")
                 if terme:
-                    st.markdown(
-                        f"📷 [Voir des photos d'exemples de « {terme} »]({lien_images(terme)})"
-                    )
+                    st.markdown(f"[{tr('see_examples', q=terme)}]({lien_images(terme)})")
 
-    # Plan d'action
-    solutions = diag.get("solutions", [])
-    if solutions:
-        st.markdown("#### 💊 Plan d'action prioritaire")
-        for i, s in enumerate(solutions, 1):
+    if diag.get("solutions"):
+        st.markdown(f"#### {tr('sec_plan')}")
+        for i, s in enumerate(diag["solutions"], 1):
             st.markdown(f"**{i}.** {s}")
-
-    # Prévention
-    prevention = diag.get("prevention", [])
-    if prevention:
-        st.markdown("#### 🛡️ Conseils de prévention")
-        for c in prevention:
+    if diag.get("prevention"):
+        st.markdown(f"#### {tr('sec_prev')}")
+        for c in diag["prevention"]:
             st.markdown(f"- {c}")
-
-    # Calendrier d'entretien
-    calendrier = diag.get("calendrier_entretien", [])
-    if calendrier:
-        st.markdown("#### 🗓️ Routine d'entretien")
-        for c in calendrier:
+    if diag.get("calendrier_entretien"):
+        st.markdown(f"#### {tr('sec_routine')}")
+        for c in diag["calendrier_entretien"]:
             st.markdown(f"- {c}")
-
-    # Astuces de grand-mère
-    astuces = diag.get("astuces_grand_mere", [])
-    if astuces:
-        st.markdown("#### 👵 Astuces de grand-mère")
-        st.caption("Remèdes naturels et traditionnels, à utiliser avec modération.")
-        for a in astuces:
+    if diag.get("astuces_grand_mere"):
+        st.markdown(f"#### {tr('sec_astuces')}")
+        st.caption(tr("astuces_cap"))
+        for a in diag["astuces_grand_mere"]:
             st.markdown(f"- {a}")
 
-    # Photos de référence de la plante
     terme_plante = " ".join(x for x in [plante, nom_latin] if x).strip()
     if terme_plante:
-        st.markdown(
-            f"🌿 [Voir des photos de référence de « {terme_plante} »]({lien_images(terme_plante)})"
-        )
+        st.markdown(f"[{tr('see_reference', q=terme_plante)}]({lien_images(terme_plante)})")
 
-    st.caption(
-        "⚠️ Diagnostic généré par une IA à titre indicatif. En cas de doute sur une plante "
-        "de valeur, consultez un professionnel."
-    )
+    st.caption(tr("disclaimer"))
 
 
-# --------------------------------------------------------------------------- #
-# Gestion des photos (accumulation de plusieurs images)
-# --------------------------------------------------------------------------- #
 def _empreinte(image_bytes: bytes) -> str:
     return hashlib.md5(image_bytes).hexdigest()
 
 
 def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
-    """Ajoute une photo à la sélection si elle n'y est pas déjà. Renvoie True si ajoutée."""
     photos = st.session_state.setdefault("photos", [])
     empreinte = _empreinte(image_bytes)
     if any(p["id"] == empreinte for p in photos):
@@ -788,15 +747,13 @@ def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Interface principale
+# Interface
 # --------------------------------------------------------------------------- #
+choix_langue = st.selectbox("🌐 Langue / Language / Sprache", list(LANGUES.keys()), key="lang_choice")
+st.session_state["lang"] = LANGUES[choix_langue]
+
 st.markdown(
-    """
-    <div class="hero">
-      <h1>🌿 Plant Doctor</h1>
-      <p>Photographiez votre plante — l'IA diagnostique sa santé et propose des solutions illustrées.</p>
-    </div>
-    """,
+    f"""<div class="hero"><h1>🌿 Plant Doctor</h1><p>{tr('hero_sub')}</p></div>""",
     unsafe_allow_html=True,
 )
 
@@ -804,43 +761,46 @@ api_key = get_api_key()
 if not api_key:
     st.error(
         "🔑 Aucune clé API Anthropic configurée.\n\n"
-        "Définissez la variable d'environnement `ANTHROPIC_API_KEY`, "
-        "ou créez le fichier `.streamlit/secrets.toml` avec :\n\n"
+        "Définissez `ANTHROPIC_API_KEY` ou créez `.streamlit/secrets.toml` :\n\n"
         "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n```"
     )
     st.stop()
 
 st.session_state.setdefault("photos", [])
+st.session_state.setdefault("historique", [])
 
-st.markdown(
-    f"**Ajoutez jusqu'à {MAX_PHOTOS} photos** de la même plante "
-    "(vue d'ensemble, feuilles, tiges, racines, zones abîmées…)."
-)
+# Historique (par session)
+if st.session_state["historique"]:
+    with st.expander(f"{tr('sec_hist')} ({len(st.session_state['historique'])})"):
+        for entree in reversed(st.session_state["historique"]):
+            cols = st.columns([4, 1])
+            cols[0].markdown(
+                f"**{entree['date']}** · {entree['plante']} · {entree['score']}/100"
+            )
+            if cols[1].button(tr("hist_review"), key=f"hist_{entree['id']}"):
+                st.session_state["diagnostic"] = entree["diag"]
+                st.rerun()
+        if st.button(tr("hist_clear")):
+            st.session_state["historique"] = []
+            st.rerun()
 
-source = st.radio(
-    "Source de la photo",
-    ["📷 Appareil photo", "🖼️ Depuis la galerie"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
+st.markdown(tr("add_hint", n=MAX_PHOTOS))
 
-if source == "📷 Appareil photo":
-    st.caption("📱 Sur téléphone, la caméra **arrière** est utilisée. Sur ordinateur, la webcam.")
+source = st.radio("src", [tr("src_cam"), tr("src_gallery")], horizontal=True, label_visibility="collapsed")
+
+if source == tr("src_cam"):
+    st.caption(tr("cam_caption"))
     photo = back_camera_input(height=360, width=340, key="cam")
     if photo is not None:
         image_bytes = photo.getvalue()
-        st.image(image_bytes, caption="Photo capturée", use_container_width=True)
-        if st.button("➕ Ajouter cette photo à l'analyse"):
+        st.image(image_bytes, use_container_width=True)
+        if st.button(tr("add_photo_btn")):
             if ajouter_photo(image_bytes, detecter_media_type(image_bytes)):
-                st.success("Photo ajoutée ✅")
+                st.success(tr("photo_added"))
             else:
-                st.info(f"Photo déjà ajoutée ou maximum de {MAX_PHOTOS} atteint.")
+                st.info(tr("photo_dup", n=MAX_PHOTOS))
 else:
-    fichiers = st.file_uploader(
-        "Choisissez une ou plusieurs photos",
-        type=list(MEDIA_TYPES.keys()),
-        accept_multiple_files=True,
-    )
+    fichiers = st.file_uploader(tr("choose_photos"), type=list(MEDIA_TYPES.keys()), accept_multiple_files=True)
     if fichiers:
         ajoutees = 0
         for fichier in fichiers:
@@ -848,23 +808,22 @@ else:
             if ajouter_photo(data, detecter_media_type(data)):
                 ajoutees += 1
         if ajoutees:
-            st.success(f"{ajoutees} photo(s) ajoutée(s) ✅")
+            st.success(tr("photos_added", n=ajoutees))
 
-# Galerie des photos sélectionnées
 photos = st.session_state.get("photos", [])
 if photos:
-    st.markdown(f"**{len(photos)} / {MAX_PHOTOS} photo(s) sélectionnée(s) :**")
+    st.markdown(tr("selected", n=len(photos), max=MAX_PHOTOS))
     cols = st.columns(min(len(photos), 4))
     for i, p in enumerate(photos):
         with cols[i % len(cols)]:
             st.image(p["bytes"], use_container_width=True)
-            if st.button("🗑️ Retirer", key=f"del_{p['id']}"):
+            if st.button(tr("remove"), key=f"del_{p['id']}"):
                 st.session_state["photos"] = [x for x in photos if x["id"] != p["id"]]
                 st.rerun()
 
     col_a, col_b = st.columns(2)
-    lancer = col_a.button("🔬 Analyser la plante", type="primary")
-    if col_b.button("♻️ Tout effacer"):
+    lancer = col_a.button(tr("analyze"), type="primary")
+    if col_b.button(tr("clear_all")):
         st.session_state["photos"] = []
         st.session_state.pop("diagnostic", None)
         st.rerun()
@@ -872,49 +831,63 @@ if photos:
     if lancer:
         client = anthropic.Anthropic(api_key=api_key)
         try:
-            with st.spinner(f"Analyse de {len(photos)} photo(s) en cours… 🌱"):
-                st.session_state["diagnostic"] = analyser_plante(
-                    client, [(p["bytes"], p["media_type"]) for p in photos]
+            with st.spinner(tr("analyzing", n=len(photos))):
+                diag = analyser_plante(
+                    client, [(p["bytes"], p["media_type"]) for p in photos], st.session_state["lang"]
                 )
+            st.session_state["diagnostic"] = diag
+            if diag.get("est_une_plante", True):
+                st.session_state["historique"].append({
+                    "id": uuid.uuid4().hex,
+                    "date": datetime.now().strftime("%d/%m %H:%M"),
+                    "plante": diag.get("plante", "—"),
+                    "score": int(diag.get("score_sante", 0)),
+                    "diag": diag,
+                })
+                st.session_state["historique"] = st.session_state["historique"][-MAX_HISTORIQUE:]
         except anthropic.AuthenticationError:
-            st.error("Clé API invalide. Vérifiez votre `ANTHROPIC_API_KEY`.")
+            st.error(tr("err_auth"))
         except anthropic.RateLimitError:
-            st.error("Trop de requêtes. Patientez quelques instants puis réessayez.")
+            st.error(tr("err_rate"))
         except anthropic.APIError as e:
-            st.error(f"Erreur de l'API Claude : {e}")
+            st.error(tr("err_api", e=e))
         except (json.JSONDecodeError, KeyError):
-            st.error("La réponse de l'IA n'a pas pu être interprétée. Réessayez avec d'autres photos.")
+            st.error(tr("err_parse"))
 else:
-    st.info("👆 Ajoutez au moins une photo pour démarrer l'analyse.")
+    st.info(tr("add_one"))
 
-# Affichage du dernier diagnostic (persistant entre les interactions)
+# Diagnostic courant (persistant)
 diagnostic = st.session_state.get("diagnostic")
 if diagnostic:
     st.divider()
     afficher_diagnostic(diagnostic)
 
-    # Export PDF
     if diagnostic.get("est_une_plante", True):
+        plante = diagnostic.get("plante") or "plante"
+
+        # Export PDF
         try:
             pdf_bytes = generer_pdf(diagnostic)
-            nom = (diagnostic.get("plante") or "plante").lower().replace(" ", "_")
-            nom = "".join(c for c in nom if c.isalnum() or c == "_") or "plante"
-            st.download_button(
-                "📄 Télécharger le diagnostic (PDF)",
-                data=pdf_bytes,
-                file_name=f"diagnostic_{nom}.pdf",
-                mime="application/pdf",
-            )
+            nom = "".join(c for c in plante.lower().replace(" ", "_") if c.isalnum() or c == "_") or "plante"
+            st.download_button(tr("dl_pdf"), data=pdf_bytes, file_name=f"diagnostic_{nom}.pdf", mime="application/pdf")
         except Exception as e:  # noqa: BLE001
-            st.caption(f"(Export PDF indisponible : {e})")
+            st.caption(f"(PDF: {e})")
 
-# Pied de page — version
+        # Rappel d'arrosage (.ics)
+        st.markdown(f"#### {tr('sec_reminder')}")
+        st.caption(tr("reminder_hint"))
+        jours = st.number_input(tr("reminder_every"), min_value=1, max_value=60,
+                                value=extraire_jours(diagnostic), step=1)
+        try:
+            ics_bytes = generer_ics(plante, int(jours))
+            st.download_button(tr("dl_ics"), data=ics_bytes,
+                               file_name=f"arrosage_{nom}.ics", mime="text/calendar")
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"(ICS: {e})")
+
+# Pied de page
 st.markdown(
-    f"""
-    <div style="text-align:center; margin-top:2.5rem; color:#7a9c83;
-                font-size:.8rem; font-weight:600;">
-      🌿 Plant Doctor · v{VERSION} — {VERSION_DATE} · propulsé par Claude
-    </div>
-    """,
+    f"""<div style="text-align:center; margin-top:2.5rem; color:#7a9c83; font-size:.8rem; font-weight:600;">
+    {tr('footer', v=VERSION, d=VERSION_DATE)}</div>""",
     unsafe_allow_html=True,
 )
