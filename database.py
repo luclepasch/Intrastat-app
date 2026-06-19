@@ -190,6 +190,22 @@ def init_db() -> None:
         """
     )
 
+    # Historique persistant des analyses (résultat + miniatures des photos)
+    an_id = "id BIGSERIAL PRIMARY KEY" if _IS_PG else "id INTEGER PRIMARY KEY AUTOINCREMENT"
+    _run(
+        f"""
+        CREATE TABLE IF NOT EXISTS analyses (
+            {an_id},
+            user_id    INTEGER NOT NULL,
+            created_at TEXT,
+            plante     TEXT,
+            score      INTEGER,
+            diagnostic TEXT,
+            thumbnails TEXT
+        )
+        """
+    )
+
 
 def _safe_add_column(table: str, coldef: str) -> None:
     """Ajoute une colonne si elle n'existe pas déjà (compatible SQLite/PG)."""
@@ -404,3 +420,41 @@ def recent_usage(limit: int = 15) -> list[dict]:
            ORDER BY l.created_at DESC LIMIT ?""",
         (limit,), fetch="all",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Historique persistant des analyses
+# --------------------------------------------------------------------------- #
+def save_analysis(user_id: int, plante: str, score: int,
+                  diagnostic_json: str, thumbnails_json: str) -> None:
+    """Enregistre une analyse (diagnostic + miniatures) pour un utilisateur."""
+    _run(
+        """INSERT INTO analyses (user_id, created_at, plante, score, diagnostic, thumbnails)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (user_id, _now(), plante, int(score or 0), diagnostic_json, thumbnails_json),
+    )
+
+
+def list_analyses(user_id: int, limit: int = 50) -> list[dict]:
+    """Liste légère des analyses d'un utilisateur (sans les données lourdes)."""
+    return _run(
+        """SELECT id, created_at, plante, score FROM analyses
+           WHERE user_id = ? ORDER BY id DESC LIMIT ?""",
+        (user_id, limit), fetch="all",
+    )
+
+
+def get_analysis(analysis_id: int, user_id: int) -> Optional[dict]:
+    """Récupère une analyse complète (diagnostic + miniatures) de l'utilisateur."""
+    return _run(
+        "SELECT * FROM analyses WHERE id = ? AND user_id = ?",
+        (analysis_id, user_id), fetch="one",
+    )
+
+
+def delete_analysis(analysis_id: int, user_id: int) -> None:
+    _run("DELETE FROM analyses WHERE id = ? AND user_id = ?", (analysis_id, user_id))
+
+
+def delete_all_analyses(user_id: int) -> None:
+    _run("DELETE FROM analyses WHERE user_id = ?", (user_id,))

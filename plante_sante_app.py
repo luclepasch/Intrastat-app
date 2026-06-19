@@ -15,6 +15,7 @@ Clé API requise : ANTHROPIC_API_KEY (variable d'environnement ou .streamlit/sec
 
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -33,6 +34,7 @@ from streamlit_back_camera_input import back_camera_input
 try:
     import auth as _auth
     import quotas as _quotas
+    import database as _db
     _USER_MGMT = True
 except Exception:
     _USER_MGMT = False
@@ -44,6 +46,17 @@ def _current_uid():
         return None
     user = _auth.get_current_user()
     return user["id"] if user else None
+
+
+def _thumbnail_b64(image_bytes: bytes, max_side: int = 600, quality: int = 70) -> str:
+    """Réduit/compresse une image et la renvoie en base64 (JPEG) pour le stockage."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -787,8 +800,31 @@ if not api_key:
 st.session_state.setdefault("photos", [])
 st.session_state.setdefault("historique", [])
 
-# Historique (par session)
-if st.session_state["historique"]:
+# Historique : persistant en base si connecté, sinon par session
+_hist_uid = _current_uid()
+if _hist_uid is not None:
+    # Historique PERSISTANT (base de données) — survit aux reconnexions
+    entrees = _db.list_analyses(_hist_uid, limit=50)
+    if entrees:
+        with st.expander(f"{tr('sec_hist')} ({len(entrees)})"):
+            for e in entrees:
+                date_aff = (e.get("created_at") or "")[:16].replace("T", " ")
+                cols = st.columns([4, 1, 1])
+                cols[0].markdown(f"**{date_aff}** · {e['plante']} · {e['score']}/100")
+                if cols[1].button(tr("hist_review"), key=f"hist_{e['id']}"):
+                    full = _db.get_analysis(e["id"], _hist_uid)
+                    if full:
+                        st.session_state["diagnostic"] = json.loads(full["diagnostic"])
+                        st.session_state["hist_thumbs"] = json.loads(full.get("thumbnails") or "[]")
+                    st.rerun()
+                if cols[2].button("🗑️", key=f"histdel_{e['id']}"):
+                    _db.delete_analysis(e["id"], _hist_uid)
+                    st.rerun()
+            if st.button(tr("hist_clear")):
+                _db.delete_all_analyses(_hist_uid)
+                st.rerun()
+elif st.session_state["historique"]:
+    # Historique de session (app utilisée sans authentification)
     with st.expander(f"{tr('sec_hist')} ({len(st.session_state['historique'])})"):
         for entree in reversed(st.session_state["historique"]):
             cols = st.columns([4, 1])
@@ -868,17 +904,30 @@ if photos:
                     client, [(p["bytes"], p["media_type"]) for p in photos], st.session_state["lang"]
                 )
             st.session_state["diagnostic"] = diag
+            st.session_state.pop("hist_thumbs", None)  # nouvelles photos courantes
             if uid is not None:
                 _quotas.record_analysis(uid)  # comptabilise l'analyse effectuée
             if diag.get("est_une_plante", True):
-                st.session_state["historique"].append({
-                    "id": uuid.uuid4().hex,
-                    "date": datetime.now().strftime("%d/%m %H:%M"),
-                    "plante": diag.get("plante", "—"),
-                    "score": int(diag.get("score_sante", 0)),
-                    "diag": diag,
-                })
-                st.session_state["historique"] = st.session_state["historique"][-MAX_HISTORIQUE:]
+                if uid is not None:
+                    # Sauvegarde PERSISTANTE en base (miniatures réduites + diagnostic)
+                    try:
+                        thumbs = [_thumbnail_b64(p["bytes"]) for p in photos]
+                    except Exception:
+                        thumbs = []
+                    _db.save_analysis(
+                        uid, diag.get("plante", "—"), int(diag.get("score_sante", 0)),
+                        json.dumps(diag), json.dumps(thumbs),
+                    )
+                else:
+                    # Historique de session (sans authentification)
+                    st.session_state["historique"].append({
+                        "id": uuid.uuid4().hex,
+                        "date": datetime.now().strftime("%d/%m %H:%M"),
+                        "plante": diag.get("plante", "—"),
+                        "score": int(diag.get("score_sante", 0)),
+                        "diag": diag,
+                    })
+                    st.session_state["historique"] = st.session_state["historique"][-MAX_HISTORIQUE:]
         except anthropic.AuthenticationError:
             st.error(tr("err_auth"))
         except anthropic.RateLimitError:
@@ -894,6 +943,18 @@ else:
 diagnostic = st.session_state.get("diagnostic")
 if diagnostic:
     st.divider()
+
+    # Photos stockées (lorsqu'on revoit une analyse de l'historique)
+    _thumbs = st.session_state.get("hist_thumbs")
+    if _thumbs:
+        st.markdown("**📸 Photos analysées**")
+        tcols = st.columns(min(len(_thumbs), 4))
+        for i, b64 in enumerate(_thumbs):
+            try:
+                tcols[i % len(tcols)].image(base64.b64decode(b64), use_container_width=True)
+            except Exception:
+                pass
+
     afficher_diagnostic(diagnostic)
 
     if diagnostic.get("est_une_plante", True):
