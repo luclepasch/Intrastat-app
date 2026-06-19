@@ -941,39 +941,50 @@ if _hist_uid is not None:
         with st.expander(f"{tr('sec_hist')} ({len(entrees)})"):
             for e in entrees:
                 date_aff = (e.get("created_at") or "")[:16].replace("T", " ")
-                cols = st.columns([4, 1, 1])
-                cols[0].markdown(f"**{date_aff}** · {e['plante']} · {e['score']}/100")
-                if cols[1].button(tr("hist_review"), key=f"hist_{e['id']}"):
+                cols = st.columns([1, 3.4, 1.2, 0.7], vertical_alignment="center")
+                # Vignette (première photo de l'analyse)
+                vignette = None
+                try:
+                    arr = json.loads(e.get("thumbnails") or "[]")
+                    if arr:
+                        vignette = base64.b64decode(arr[0])
+                except Exception:
+                    pass
+                if vignette:
+                    cols[0].image(vignette, use_container_width=True)
+                else:
+                    cols[0].markdown("🪴")
+                cols[1].markdown(f"**{date_aff}**  \n{e['plante']} · {e['score']}/100")
+                if cols[2].button(tr("hist_review"), key=f"hist_{e['id']}"):
                     full = _db.get_analysis(e["id"], _hist_uid)
                     if full:
                         st.session_state["diagnostic"] = json.loads(full["diagnostic"])
                         st.session_state["hist_thumbs"] = json.loads(full.get("thumbnails") or "[]")
                     st.rerun()
-                if cols[2].button("🗑️", key=f"histdel_{e['id']}"):
+                if cols[3].button("🗑️", key=f"histdel_{e['id']}"):
                     _db.delete_analysis(e["id"], _hist_uid)
                     st.rerun()
 
             st.divider()
-            # Export de l'historique
-            ce1, ce2 = st.columns(2)
-            ce1.download_button(
-                "📥 Export CSV", data=_export_csv(_hist_uid),
+            # Actions d'export / nettoyage — en ligne
+            b1, b2, b3 = st.columns(3)
+            b1.download_button(
+                "📥 CSV", data=_export_csv(_hist_uid),
                 file_name="historique_analyses.csv", mime="text/csv", key="exp_csv",
             )
-            if ce2.button("📦 Préparer l'export PDF (ZIP)", key="prep_zip"):
+            if b2.button("📦 PDF (ZIP)", key="prep_zip"):
                 with st.spinner("Génération des PDF…"):
                     st.session_state["zip_export"] = _export_zip_pdfs(_hist_uid)
+            if b3.button(tr("hist_clear"), key="hist_clear_db"):
+                _db.delete_all_analyses(_hist_uid)
+                st.session_state.pop("zip_export", None)
+                st.rerun()
             if st.session_state.get("zip_export"):
                 st.download_button(
                     "⬇️ Télécharger le ZIP des fiches PDF",
                     data=st.session_state["zip_export"],
                     file_name="analyses_pdf.zip", mime="application/zip", key="dl_zip",
                 )
-
-            if st.button(tr("hist_clear")):
-                _db.delete_all_analyses(_hist_uid)
-                st.session_state.pop("zip_export", None)
-                st.rerun()
 elif st.session_state["historique"]:
     # Historique de session (app utilisée sans authentification)
     with st.expander(f"{tr('sec_hist')} ({len(st.session_state['historique'])})"):

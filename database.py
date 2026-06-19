@@ -448,9 +448,9 @@ def save_analysis(user_id: int, plante: str, score: int,
 
 
 def list_analyses(user_id: int, limit: int = 50) -> list[dict]:
-    """Liste légère des analyses d'un utilisateur (sans les données lourdes)."""
+    """Liste des analyses d'un utilisateur (avec les miniatures pour les vignettes)."""
     return _run(
-        """SELECT id, created_at, plante, score FROM analyses
+        """SELECT id, created_at, plante, score, thumbnails FROM analyses
            WHERE user_id = ? ORDER BY id DESC LIMIT ?""",
         (user_id, limit), fetch="all",
     )
