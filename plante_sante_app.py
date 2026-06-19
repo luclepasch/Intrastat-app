@@ -38,7 +38,7 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
-VERSION = "1.6"
+VERSION = "1.7"
 VERSION_DATE = "juin 2026"
 
 st.markdown(
@@ -236,6 +236,30 @@ SCHEMA = {
                     "additionalProperties": False,
                 },
                 "temperature_humidite": {"type": "string"},
+                "engrais": {
+                    "type": "object",
+                    "description": "Conseils de fertilisation adaptés à l'espèce.",
+                    "properties": {
+                        "type_recommande": {
+                            "type": "string",
+                            "description": "Type d'engrais conseillé (ex: 'engrais liquide riche en potassium').",
+                        },
+                        "frequence": {
+                            "type": "string",
+                            "description": "À quelle fréquence fertiliser (ex: 'tous les 15 jours au printemps/été').",
+                        },
+                        "periode": {
+                            "type": "string",
+                            "description": "Période de l'année où fertiliser / où s'arrêter.",
+                        },
+                        "precautions": {
+                            "type": "string",
+                            "description": "Précautions (diluer, ne pas fertiliser une plante stressée, etc.).",
+                        },
+                    },
+                    "required": ["type_recommande", "frequence", "periode", "precautions"],
+                    "additionalProperties": False,
+                },
                 "substrat": {
                     "type": "object",
                     "description": "Substrats adaptés à cette plante.",
@@ -259,7 +283,7 @@ SCHEMA = {
                     "additionalProperties": False,
                 },
             },
-            "required": ["arrosage", "lumiere", "temperature_humidite", "substrat"],
+            "required": ["arrosage", "lumiere", "temperature_humidite", "engrais", "substrat"],
             "additionalProperties": False,
         },
         "problemes": {
@@ -343,8 +367,9 @@ SYSTEM_PROMPT = (
     "des conseils d'arrosage précis (fréquence, méthode, signes de manque/d'excès) et "
     "des recommandations de substrats adaptés à l'espèce (mélange idéal, composants "
     "conseillés et à éviter), des conseils d'exposition à la lumière (exposition idéale, "
-    "emplacement, durée, à éviter, signes d'un mauvais éclairage), ainsi que des astuces "
-    "naturelles traditionnelles ('de grand-mère') pertinentes pour cette plante. "
+    "emplacement, durée, à éviter, signes d'un mauvais éclairage), des conseils de "
+    "fertilisation (type d'engrais, fréquence, période, précautions), ainsi que des "
+    "astuces naturelles traditionnelles ('de grand-mère') pertinentes pour cette plante. "
     "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
     "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
     "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
@@ -411,6 +436,143 @@ def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]
 # --------------------------------------------------------------------------- #
 COULEUR_ETAT = {"Bon": "🟢", "Moyen": "🟡", "Mauvais": "🔴", "Inconnu": "⚪"}
 COULEUR_GRAVITE = {"Faible": "🟢", "Modérée": "🟡", "Élevée": "🔴"}
+
+# Remplacements pour rendre le texte compatible avec les polices PDF de base (latin-1)
+_PDF_REMP = {
+    "œ": "oe", "Œ": "OE", "æ": "ae", "—": "-", "–": "-", "’": "'", "‘": "'",
+    "“": '"', "”": '"', "…": "...", "•": "-", "→": "->", "≈": "~",
+}
+
+
+def _pdf_txt(s) -> str:
+    s = str(s)
+    for k, v in _PDF_REMP.items():
+        s = s.replace(k, v)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def generer_pdf(diag: dict) -> bytes:
+    """Génère une fiche PDF du diagnostic."""
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    vert = (21, 128, 61)
+
+    def _line(txt, h):
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, h, _pdf_txt(txt), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    def titre(txt, size):
+        pdf.set_font("Helvetica", "B", size)
+        pdf.set_text_color(*vert)
+        _line(txt, 8)
+        pdf.set_text_color(0, 0, 0)
+
+    def para(txt, bold=False, size=11):
+        pdf.set_font("Helvetica", "B" if bold else "", size)
+        _line(txt, 6)
+
+    def puce(txt):
+        pdf.set_font("Helvetica", "", 11)
+        _line("  - " + txt, 6)
+
+    titre("Plant Doctor - Diagnostic", 18)
+    sous = diag.get("plante", "Plante")
+    if diag.get("nom_latin"):
+        sous += f" ({diag['nom_latin']})"
+    para(sous, bold=True, size=13)
+    if diag.get("famille"):
+        para(f"Famille : {diag['famille']}")
+    para(
+        f"Etat : {diag.get('etat_general', '-')}   |   "
+        f"Score : {diag.get('score_sante', 0)}/100   |   "
+        f"Confiance : {diag.get('confiance', '-')}"
+    )
+    if diag.get("resume"):
+        para(diag["resume"])
+    pdf.ln(2)
+
+    if diag.get("identification_details"):
+        titre("Identification", 13)
+        para(diag["identification_details"])
+    if diag.get("analyse_detaillee"):
+        titre("Analyse detaillee", 13)
+        para(diag["analyse_detaillee"])
+
+    cc = diag.get("conditions_culture", {})
+    if cc:
+        titre("Conditions de culture", 13)
+        arr = cc.get("arrosage", {})
+        if isinstance(arr, dict) and any(arr.values()):
+            para("Arrosage :", bold=True)
+            for lbl, key in [("Frequence", "frequence"), ("Methode", "methode"),
+                             ("Signes de manque", "signes_de_manque"),
+                             ("Signes d'exces", "signes_d_exces")]:
+                if arr.get(key):
+                    puce(f"{lbl} : {arr[key]}")
+        lum = cc.get("lumiere", {})
+        if isinstance(lum, dict) and any(lum.values()):
+            para("Exposition a la lumiere :", bold=True)
+            for lbl, key in [("Exposition", "exposition"), ("Emplacement", "emplacement"),
+                             ("Duree", "duree"), ("A eviter", "a_eviter"),
+                             ("Signes mauvais eclairage", "signes_mauvais_eclairage")]:
+                if lum.get(key):
+                    puce(f"{lbl} : {lum[key]}")
+        if cc.get("temperature_humidite"):
+            para("Temperature / humidite :", bold=True)
+            puce(cc["temperature_humidite"])
+        eng = cc.get("engrais", {})
+        if isinstance(eng, dict) and any(eng.values()):
+            para("Fertilisation / engrais :", bold=True)
+            for lbl, key in [("Type recommande", "type_recommande"), ("Frequence", "frequence"),
+                             ("Periode", "periode"), ("Precautions", "precautions")]:
+                if eng.get(key):
+                    puce(f"{lbl} : {eng[key]}")
+        sub = cc.get("substrat", {})
+        if isinstance(sub, dict) and any(sub.values()):
+            para("Substrat :", bold=True)
+            if sub.get("melange_ideal"):
+                puce(f"Melange ideal : {sub['melange_ideal']}")
+            for s in sub.get("conseilles", []):
+                puce(f"Conseille : {s}")
+            for s in sub.get("deconseilles", []):
+                puce(f"A eviter : {s}")
+
+    problemes = diag.get("problemes", [])
+    if problemes:
+        titre("Problemes detectes", 13)
+        for p in problemes:
+            para(f"{p.get('nom', 'Probleme')} (gravite : {p.get('gravite', '-')})", bold=True)
+            if p.get("symptomes"):
+                puce(f"Symptomes : {p['symptomes']}")
+            if p.get("cause"):
+                puce(f"Cause : {p['cause']}")
+            for t in p.get("traitement", []):
+                puce(f"Traitement : {t}")
+
+    for cle, titre_section in [
+        ("solutions", "Plan d'action prioritaire"),
+        ("prevention", "Conseils de prevention"),
+        ("calendrier_entretien", "Routine d'entretien"),
+        ("astuces_grand_mere", "Astuces de grand-mere"),
+    ]:
+        items = diag.get(cle, [])
+        if items:
+            titre(titre_section, 13)
+            for it in items:
+                puce(it)
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(
+        0, 5,
+        _pdf_txt(f"Plant Doctor v{VERSION} - Diagnostic genere par IA, a titre indicatif."),
+    )
+    return bytes(pdf.output())
 
 
 def lien_images(terme: str) -> str:
@@ -526,6 +688,19 @@ def afficher_diagnostic(diag: dict) -> None:
 
         # Température / humidité
         st.markdown(f"🌡️ **Température / humidité :** {cc.get('temperature_humidite', '—')}")
+
+        # Fertilisation / engrais
+        eng = cc.get("engrais", {})
+        if isinstance(eng, dict) and any(eng.values()):
+            with st.expander("🧪 Fertilisation / engrais", expanded=True):
+                if eng.get("type_recommande"):
+                    st.markdown(f"**Type recommandé :** {eng['type_recommande']}")
+                if eng.get("frequence"):
+                    st.markdown(f"**Fréquence :** {eng['frequence']}")
+                if eng.get("periode"):
+                    st.markdown(f"📅 **Période :** {eng['periode']}")
+                if eng.get("precautions"):
+                    st.markdown(f"⚠️ **Précautions :** {eng['precautions']}")
 
     # Problèmes détectés
     problemes = diag.get("problemes", [])
@@ -691,17 +866,16 @@ if photos:
     lancer = col_a.button("🔬 Analyser la plante", type="primary")
     if col_b.button("♻️ Tout effacer"):
         st.session_state["photos"] = []
+        st.session_state.pop("diagnostic", None)
         st.rerun()
 
     if lancer:
         client = anthropic.Anthropic(api_key=api_key)
         try:
             with st.spinner(f"Analyse de {len(photos)} photo(s) en cours… 🌱"):
-                diagnostic = analyser_plante(
+                st.session_state["diagnostic"] = analyser_plante(
                     client, [(p["bytes"], p["media_type"]) for p in photos]
                 )
-            st.divider()
-            afficher_diagnostic(diagnostic)
         except anthropic.AuthenticationError:
             st.error("Clé API invalide. Vérifiez votre `ANTHROPIC_API_KEY`.")
         except anthropic.RateLimitError:
@@ -712,6 +886,27 @@ if photos:
             st.error("La réponse de l'IA n'a pas pu être interprétée. Réessayez avec d'autres photos.")
 else:
     st.info("👆 Ajoutez au moins une photo pour démarrer l'analyse.")
+
+# Affichage du dernier diagnostic (persistant entre les interactions)
+diagnostic = st.session_state.get("diagnostic")
+if diagnostic:
+    st.divider()
+    afficher_diagnostic(diagnostic)
+
+    # Export PDF
+    if diagnostic.get("est_une_plante", True):
+        try:
+            pdf_bytes = generer_pdf(diagnostic)
+            nom = (diagnostic.get("plante") or "plante").lower().replace(" ", "_")
+            nom = "".join(c for c in nom if c.isalnum() or c == "_") or "plante"
+            st.download_button(
+                "📄 Télécharger le diagnostic (PDF)",
+                data=pdf_bytes,
+                file_name=f"diagnostic_{nom}.pdf",
+                mime="application/pdf",
+            )
+        except Exception as e:  # noqa: BLE001
+            st.caption(f"(Export PDF indisponible : {e})")
 
 # Pied de page — version
 st.markdown(
