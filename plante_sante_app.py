@@ -24,6 +24,7 @@ import urllib.parse
 import anthropic
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_back_camera_input import back_camera_input
 
 # --------------------------------------------------------------------------- #
 # Configuration de la page (mobile-first)
@@ -184,6 +185,19 @@ MEDIA_TYPES = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
     "webp": "image/webp", "gif": "image/gif",
 }
+
+
+def detecter_media_type(b: bytes) -> str:
+    """Détecte le type MIME d'une image à partir de ses premiers octets."""
+    if b[:8].startswith(b"\x89PNG"):
+        return "image/png"
+    if b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return "image/jpeg"
 
 
 def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]) -> dict:
@@ -404,10 +418,13 @@ source = st.radio(
 )
 
 if source == "📷 Appareil photo":
-    photo = st.camera_input("Prenez une photo de la plante")
+    st.caption("📱 Sur téléphone, la caméra **arrière** est utilisée. Sur ordinateur, la webcam.")
+    photo = back_camera_input(key="cam")
     if photo is not None:
+        image_bytes = photo.getvalue()
+        st.image(image_bytes, caption="Photo capturée", use_container_width=True)
         if st.button("➕ Ajouter cette photo à l'analyse"):
-            if ajouter_photo(photo.getvalue(), photo.type or "image/jpeg"):
+            if ajouter_photo(image_bytes, detecter_media_type(image_bytes)):
                 st.success("Photo ajoutée ✅")
             else:
                 st.info(f"Photo déjà ajoutée ou maximum de {MAX_PHOTOS} atteint.")
@@ -420,8 +437,8 @@ else:
     if fichiers:
         ajoutees = 0
         for fichier in fichiers:
-            ext = fichier.name.rsplit(".", 1)[-1].lower()
-            if ajouter_photo(fichier.getvalue(), MEDIA_TYPES.get(ext, "image/jpeg")):
+            data = fichier.getvalue()
+            if ajouter_photo(data, detecter_media_type(data)):
                 ajoutees += 1
         if ajoutees:
             st.success(f"{ajoutees} photo(s) ajoutée(s) ✅")

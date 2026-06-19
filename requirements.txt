@@ -2,3 +2,4 @@ streamlit
 pymupdf
 pandas
 anthropic
+streamlit-back-camera-input
