@@ -130,9 +130,11 @@ def _render_users() -> None:
     # --- Création rapide d'un utilisateur ---
     with st.expander("➕ Créer un utilisateur"):
         with st.form("admin_create"):
-            c1, c2 = st.columns(2)
-            email = c1.text_input("E-mail")
-            full_name = c2.text_input("Nom complet")
+            t1, t2, t3 = st.columns([1, 2, 2])
+            title = t1.selectbox("Titre", auth.TITRES)
+            first_name = t2.text_input("Prénom")
+            last_name = t3.text_input("Nom")
+            email = st.text_input("E-mail")
             c3, c4, c5 = st.columns(3)
             password = c3.text_input("Mot de passe", type="password")
             role = c4.selectbox("Rôle", auth.ROLES, index=auth.ROLES.index("USER"))
@@ -140,8 +142,9 @@ def _render_users() -> None:
             ok = st.form_submit_button("Créer")
         if ok:
             # Compte créé par l'admin : actif immédiatement
-            success, msg = auth.register_user(email, password, full_name, role,
-                                              plan=plan, active=True)
+            success, msg = auth.register_user(
+                email, password, first_name=first_name, last_name=last_name,
+                title=title, role=role, plan=plan, active=True)
             if success:
                 st.success(msg)
                 st.rerun()
@@ -158,12 +161,27 @@ def _render_users() -> None:
         badge = "🟢" if actif else "🔴"
         with st.expander(f"{badge} {u['email']}  ·  {u['role']}"):
             st.markdown(
-                f"**ID :** {u['id']}  ·  **Nom :** {u.get('full_name') or '—'}  ·  "
+                f"**ID :** {u['id']}  ·  **Titre :** {u.get('title') or '—'}  ·  "
+                f"**Prénom :** {u.get('first_name') or '—'}  ·  "
+                f"**Nom :** {u.get('last_name') or '—'}  ·  "
                 f"**Formule :** {u.get('plan') or 'FREE'}  \n"
                 f"**Créé le :** {u.get('created_at') or '—'}  ·  "
                 f"**Dernière connexion :** {u.get('last_login_at') or '—'}  \n"
                 f"**Échecs de connexion :** {u.get('failed_attempts', 0)}"
             )
+
+            # Édition de l'identité (titre / prénom / nom)
+            with st.form(f"identity_{u['id']}"):
+                i1, i2, i3 = st.columns([1, 2, 2])
+                t_cur = u.get("title") or ""
+                t_idx = auth.TITRES.index(t_cur) if t_cur in auth.TITRES else 0
+                new_title = i1.selectbox("Titre", auth.TITRES, index=t_idx, key=f"t_{u['id']}")
+                new_first = i2.text_input("Prénom", value=u.get("first_name") or "", key=f"fn_{u['id']}")
+                new_last = i3.text_input("Nom", value=u.get("last_name") or "", key=f"ln_{u['id']}")
+                if st.form_submit_button("💾 Enregistrer l'identité"):
+                    db.update_user_identity(u["id"], new_title, new_first, new_last)
+                    st.success("Identité mise à jour.")
+                    st.rerun()
 
             est_soi_meme = current and current["id"] == u["id"]
             col1, col2 = st.columns(2)

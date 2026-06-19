@@ -30,6 +30,7 @@ import database as db
 # Paramètres de sécurité
 # --------------------------------------------------------------------------- #
 ROLES = ("ADMIN", "USER")
+TITRES = ("", "M.", "Mme", "Dr", "Pr")  # civilités disponibles
 MIN_PASSWORD_LEN = 8
 MAX_FAILED_ATTEMPTS = 5           # tentatives avant verrouillage
 LOCK_MINUTES = 15                 # durée du verrouillage
@@ -79,8 +80,8 @@ def _valid_password(pw: str) -> bool:
 # --------------------------------------------------------------------------- #
 # Inscription
 # --------------------------------------------------------------------------- #
-def register_user(email: str, password: str, full_name: str = "",
-                  role: str = "USER", plan: str = "FREE",
+def register_user(email: str, password: str, first_name: str = "", last_name: str = "",
+                  title: str = "", role: str = "USER", plan: str = "FREE",
                   active: bool = True) -> tuple[bool, str]:
     """Crée un nouvel utilisateur. Renvoie (succès, message).
 
@@ -96,15 +97,18 @@ def register_user(email: str, password: str, full_name: str = "",
         return False, f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LEN} caractères."
     if role not in ROLES:
         role = "USER"
+    if title not in TITRES:
+        title = ""
     if plan not in quotas.PLANS:
         plan = "FREE"
     if db.get_user_by_email(email):
         return False, "Un compte existe déjà avec cette adresse e-mail."
 
-    db.create_user(email, hash_password(password), full_name, role,
-                   is_active=active, plan=plan)
+    db.create_user(email, hash_password(password), role=role, is_active=active, plan=plan,
+                   title=title, first_name=first_name, last_name=last_name)
 
     if not active:
+        full_name = " ".join(p for p in (title, first_name, last_name) if p).strip()
         try:
             import mailer
             mailer.notify_admin_new_registration(email, full_name, plan)
@@ -189,11 +193,14 @@ def change_password(user_id: int, current_password: str,
     return True, "Mot de passe modifié avec succès."
 
 
-def update_profile_name(user_id: int, full_name: str) -> tuple[bool, str]:
-    """Met à jour le nom complet de l'utilisateur et la session."""
-    db.update_full_name(user_id, full_name)
+def update_profile_identity(user_id: int, title: str, first_name: str,
+                            last_name: str) -> tuple[bool, str]:
+    """Met à jour titre/prénom/nom de l'utilisateur et la session."""
+    if title not in TITRES:
+        title = ""
+    full_name = db.update_user_identity(user_id, title, first_name, last_name)
     if st.session_state.get("user_id") == user_id:
-        st.session_state["full_name"] = full_name.strip()
+        st.session_state["full_name"] = full_name
     return True, "Profil mis à jour."
 
 
@@ -303,7 +310,10 @@ def render_auth_page() -> None:
         else:
             st.caption("Créez votre compte. Il sera activé après validation par un administrateur.")
             with st.form("form_register"):
-                full_name = st.text_input("Nom complet", key="reg_name")
+                rc1, rc2, rc3 = st.columns([1, 2, 2])
+                title = rc1.selectbox("Titre", TITRES, key="reg_title")
+                first_name = rc2.text_input("Prénom", key="reg_first")
+                last_name = rc3.text_input("Nom", key="reg_last")
                 email_r = st.text_input("E-mail", key="reg_email")
                 pw1 = st.text_input("Mot de passe", type="password", key="reg_pw1")
                 pw2 = st.text_input("Confirmer le mot de passe", type="password", key="reg_pw2")
@@ -313,8 +323,9 @@ def render_auth_page() -> None:
                 if pw1 != pw2:
                     st.error("Les deux mots de passe ne correspondent pas.")
                 else:
-                    ok, msg = register_user(email_r, pw1, full_name, role="USER",
-                                            plan=plan, active=False)
+                    ok, msg = register_user(email_r, pw1, first_name=first_name,
+                                            last_name=last_name, title=title,
+                                            role="USER", plan=plan, active=False)
                     if ok:
                         st.success(
                             "✅ Inscription enregistrée ! Votre compte sera actif "

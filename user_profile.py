@@ -41,13 +41,18 @@ def render_profile() -> None:
 
     st.divider()
 
-    # --- Modifier le nom complet ---
-    st.markdown("### ✏️ Nom complet")
-    with st.form("profile_name"):
-        nom = st.text_input("Nom complet", value=user.get("full_name") or "")
+    # --- Modifier l'identité (titre / prénom / nom) ---
+    st.markdown("### ✏️ Mon identité")
+    with st.form("profile_identity"):
+        p1, p2, p3 = st.columns([1, 2, 2])
+        t_cur = user.get("title") or ""
+        t_idx = auth.TITRES.index(t_cur) if t_cur in auth.TITRES else 0
+        title = p1.selectbox("Titre", auth.TITRES, index=t_idx)
+        first_name = p2.text_input("Prénom", value=user.get("first_name") or "")
+        last_name = p3.text_input("Nom", value=user.get("last_name") or "")
         ok = st.form_submit_button("Enregistrer")
     if ok:
-        success, msg = auth.update_profile_name(user["id"], nom)
+        success, msg = auth.update_profile_identity(user["id"], title, first_name, last_name)
         if success:
             st.success(msg)
             st.rerun()
