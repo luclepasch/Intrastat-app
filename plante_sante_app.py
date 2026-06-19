@@ -21,6 +21,7 @@ import os
 import re
 import urllib.parse
 import uuid
+import zipfile
 from datetime import datetime, timedelta
 
 import anthropic
@@ -48,15 +49,64 @@ def _current_uid():
     return user["id"] if user else None
 
 
-def _thumbnail_b64(image_bytes: bytes, max_side: int = 600, quality: int = 70) -> str:
+def _thumb_settings() -> tuple[int, int]:
+    """Taille max / qualité des miniatures, configurables (THUMB_MAX_SIDE/QUALITY)."""
+    max_side, quality = 600, 70
+    if _USER_MGMT:
+        try:
+            max_side = int(_db.get_config("THUMB_MAX_SIDE") or max_side)
+            quality = int(_db.get_config("THUMB_QUALITY") or quality)
+        except (ValueError, TypeError):
+            pass
+    return max(200, min(2000, max_side)), max(30, min(95, quality))
+
+
+def _thumbnail_b64(image_bytes: bytes) -> str:
     """Réduit/compresse une image et la renvoie en base64 (JPEG) pour le stockage."""
     from PIL import Image
 
+    max_side, quality = _thumb_settings()
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img.thumbnail((max_side, max_side))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _slug(s: str) -> str:
+    s = (s or "plante").lower().replace(" ", "_")
+    return "".join(c for c in s if c.isalnum() or c == "_") or "plante"
+
+
+def _export_csv(uid: int) -> bytes:
+    """Exporte l'historique de l'utilisateur en CSV (léger)."""
+    import pandas as pd
+
+    rows = _db.list_analyses(uid, limit=1000) or []
+    if not rows:
+        return b""
+    df = pd.DataFrame(rows).rename(columns={"created_at": "date"})
+    cols = [c for c in ["id", "date", "plante", "score"] if c in df.columns]
+    return df[cols].to_csv(index=False).encode("utf-8")
+
+
+def _export_zip_pdfs(uid: int) -> bytes:
+    """Génère un ZIP contenant une fiche PDF par analyse de l'historique."""
+    rows = _db.list_analyses(uid, limit=1000) or []
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for r in rows:
+            full = _db.get_analysis(r["id"], uid)
+            if not full:
+                continue
+            try:
+                diag = json.loads(full["diagnostic"])
+                pdf = generer_pdf(diag)
+            except Exception:
+                continue
+            date = (r.get("created_at") or "")[:10]
+            z.writestr(f"{date}_{_slug(r.get('plante'))}_{r['id']}.pdf", pdf)
+    return buf.getvalue()
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -820,8 +870,27 @@ if _hist_uid is not None:
                 if cols[2].button("🗑️", key=f"histdel_{e['id']}"):
                     _db.delete_analysis(e["id"], _hist_uid)
                     st.rerun()
+
+            st.divider()
+            # Export de l'historique
+            ce1, ce2 = st.columns(2)
+            ce1.download_button(
+                "📥 Export CSV", data=_export_csv(_hist_uid),
+                file_name="historique_analyses.csv", mime="text/csv", key="exp_csv",
+            )
+            if ce2.button("📦 Préparer l'export PDF (ZIP)", key="prep_zip"):
+                with st.spinner("Génération des PDF…"):
+                    st.session_state["zip_export"] = _export_zip_pdfs(_hist_uid)
+            if st.session_state.get("zip_export"):
+                st.download_button(
+                    "⬇️ Télécharger le ZIP des fiches PDF",
+                    data=st.session_state["zip_export"],
+                    file_name="analyses_pdf.zip", mime="application/zip", key="dl_zip",
+                )
+
             if st.button(tr("hist_clear")):
                 _db.delete_all_analyses(_hist_uid)
+                st.session_state.pop("zip_export", None)
                 st.rerun()
 elif st.session_state["historique"]:
     # Historique de session (app utilisée sans authentification)
@@ -918,6 +987,10 @@ if photos:
                         uid, diag.get("plante", "—"), int(diag.get("score_sante", 0)),
                         json.dumps(diag), json.dumps(thumbs),
                     )
+                    # Purge automatique des analyses trop anciennes (rétention)
+                    cutoff = _db.retention_cutoff_iso()
+                    if cutoff:
+                        _db.delete_analyses_before(cutoff)
                 else:
                     # Historique de session (sans authentification)
                     st.session_state["historique"].append({

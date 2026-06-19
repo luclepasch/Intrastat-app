@@ -78,6 +78,28 @@ def _render_dashboard() -> None:
     else:
         st.caption("Aucune analyse pour le moment.")
 
+    # --- Rétention & purge de l'historique ---
+    st.markdown("### 🗓️ Rétention de l'historique")
+    stockees = db.count_stored_analyses()
+    cutoff = db.retention_cutoff_iso()
+    st.caption(
+        f"Analyses stockées : **{stockees}**  ·  "
+        + ("Purge automatique : **désactivée** (ANALYSIS_RETENTION_MONTHS non défini)."
+           if not cutoff else
+           f"Purge automatique active : suppression au-delà de la limite configurée "
+           f"(avant {cutoff[:10]}).")
+    )
+    with st.expander("🗑️ Purger manuellement"):
+        mois = st.number_input("Supprimer les analyses de plus de (mois)",
+                               min_value=1, max_value=120, value=12, step=1)
+        c = (datetime.utcnow() - timedelta(days=int(mois) * 30)).isoformat(timespec="seconds")
+        concernees = db.count_analyses_before(c)
+        st.caption(f"{concernees} analyse(s) seraient supprimée(s).")
+        if st.button("Purger maintenant", disabled=concernees == 0):
+            db.delete_analyses_before(c)
+            st.success(f"{concernees} analyse(s) supprimée(s).")
+            st.rerun()
+
 
 # --------------------------------------------------------------------------- #
 # Onglet : Gestion des utilisateurs
