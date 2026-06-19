@@ -200,6 +200,15 @@ st.markdown(
       .stButton button:hover, .stDownloadButton button:hover {
         transform: translateY(-1px); box-shadow: 0 10px 22px rgba(22,163,74,.35); color:#fff;
       }
+      /* Bouton globe (déclencheur du popover de langue) : même style que les boutons */
+      div[data-testid="stPopover"] > div > button,
+      div[data-testid="stPopover"] button {
+        background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+        color: #fff !important; border: none !important; border-radius: 14px !important;
+        font-weight: 700 !important; font-size: 1.15rem !important;
+        box-shadow: 0 6px 16px rgba(22,163,74,.25) !important;
+      }
+      div[data-testid="stPopover"] button:hover { filter: brightness(1.05); }
       div[data-testid="stMetric"] {
         background: #fff; border: 1px solid #d9efdd; border-radius: 16px;
         padding: .9rem .7rem; box-shadow: 0 4px 14px rgba(20,39,26,.05); text-align: center;
