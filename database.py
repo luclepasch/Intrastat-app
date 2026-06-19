@@ -179,11 +179,20 @@ def init_db() -> None:
     )
 
     # Colonnes ajoutées de façon idempotente pour les bases existantes
-    for col in ("quota_day", "quota_week", "quota_month", "quota_year"):
-        _safe_add_column("users", f"{col} INTEGER")
-    _safe_add_column("users", "plan TEXT DEFAULT 'FREE'")
-    for col in ("title", "first_name", "last_name"):
-        _safe_add_column("users", f"{col} TEXT")
+    existing = _existing_columns("users")
+    migrations = [
+        ("quota_day", "quota_day INTEGER"),
+        ("quota_week", "quota_week INTEGER"),
+        ("quota_month", "quota_month INTEGER"),
+        ("quota_year", "quota_year INTEGER"),
+        ("plan", "plan TEXT DEFAULT 'FREE'"),
+        ("title", "title TEXT"),
+        ("first_name", "first_name TEXT"),
+        ("last_name", "last_name TEXT"),
+    ]
+    for col_name, coldef in migrations:
+        if col_name not in existing:
+            _safe_add_column("users", col_name, coldef)
 
     # Journal d'utilisation : une ligne par analyse effectuée
     usage_id = "id BIGSERIAL PRIMARY KEY" if _IS_PG else "id INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -214,12 +223,29 @@ def init_db() -> None:
     )
 
 
-def _safe_add_column(table: str, coldef: str) -> None:
+def _existing_columns(table: str) -> set:
+    """Renvoie l'ensemble des colonnes existantes d'une table (SQLite/PG)."""
+    try:
+        if _IS_PG:
+            rows = _run(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+                (table,), fetch="all",
+            )
+            return {r["column_name"] for r in rows}
+        rows = _run(f"PRAGMA table_info({table})", fetch="all")
+        return {r["name"] for r in rows}
+    except Exception:
+        return set()
+
+
+def _safe_add_column(table: str, col_name: str, coldef: str) -> None:
     """Ajoute une colonne si elle n'existe pas déjà (compatible SQLite/PG)."""
     try:
+        if col_name in _existing_columns(table):
+            return
         _run(f"ALTER TABLE {table} ADD COLUMN {coldef}")
     except Exception:
-        pass  # la colonne existe déjà
+        pass  # la colonne existe déjà ou course concurrente
 
 
 # --------------------------------------------------------------------------- #
