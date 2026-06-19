@@ -83,6 +83,8 @@ with st.sidebar:
             ["🌿 Application", "🛠️ Administration"],
             key="nav_page",
         )
+        # Indicateur de la base de données active (visible par les ADMIN)
+        st.caption(f"🗄️ Base : **{db.BACKEND}**")
 
     st.divider()
     if st.button("🚪 Se déconnecter", key="btn_logout"):
