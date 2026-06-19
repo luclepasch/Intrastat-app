@@ -106,6 +106,28 @@ st.markdown(
         background:#fff; border:1px solid #d9efdd; border-radius:999px;
         padding:.3rem .9rem; margin-right:.4rem; font-weight:700;
       }
+
+      /* Empêche tout débordement horizontal (iframes de composants, médias) */
+      iframe, img, video, svg { max-width: 100% !important; }
+      .stApp { overflow-x: hidden; }
+
+      /* ---- Adaptations smartphone ---- */
+      @media (max-width: 640px) {
+        .block-container { padding-left: .8rem; padding-right: .8rem; }
+        .hero { padding: 1.2rem 1rem; border-radius: 18px; }
+        .hero h1 { font-size: 1.55rem; }
+        .hero p { font-size: .9rem; }
+        h4 { font-size: 1.05rem; }
+
+        /* Cartes métriques compactes et toujours lisibles sur 3 colonnes */
+        div[data-testid="stMetric"] { padding: .55rem .35rem; }
+        div[data-testid="stMetricValue"] { font-size: 1.1rem; }
+        div[data-testid="stMetricLabel"] p { font-size: .72rem; }
+
+        /* Les colonnes passent en pleine largeur (empilées) */
+        div[data-testid="stHorizontalBlock"] { gap: .5rem; }
+        .stButton button { font-size: 1rem; height: 2.8rem; }
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -344,8 +366,11 @@ def afficher_diagnostic(diag: dict) -> None:
     if svg.startswith("<svg"):
         st.markdown("#### 🖼️ Schéma illustré")
         components.html(
-            f'<div style="display:flex;justify-content:center;">{svg}</div>',
-            height=380,
+            "<div style='display:flex;justify-content:center;align-items:center;"
+            "width:100%;'>"
+            "<style>svg{width:100%;height:auto;max-width:360px;}</style>"
+            f"{svg}</div>",
+            height=340,
         )
 
     # Identification & analyse détaillée
@@ -484,7 +509,7 @@ source = st.radio(
 
 if source == "📷 Appareil photo":
     st.caption("📱 Sur téléphone, la caméra **arrière** est utilisée. Sur ordinateur, la webcam.")
-    photo = back_camera_input(key="cam")
+    photo = back_camera_input(height=360, width=340, key="cam")
     if photo is not None:
         image_bytes = photo.getvalue()
         st.image(image_bytes, caption="Photo capturée", use_container_width=True)
