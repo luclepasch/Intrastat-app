@@ -1,27 +1,88 @@
 """
-admin.py — Interface d'administration des utilisateurs (réservée ADMIN).
+admin.py — Interface d'administration (réservée ADMIN).
 
-Fonctions :
-  - liste et recherche des utilisateurs
-  - changement de rôle (ADMIN / USER)
-  - activation / désactivation des comptes
-  - réinitialisation du mot de passe
-  - suppression d'un compte
+Deux onglets :
+  - 📊 Tableau de bord : statistiques (utilisateurs, analyses, graphiques)
+  - 👥 Utilisateurs     : liste, recherche, rôle, activation, reset MDP, quotas
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+import pandas as pd
 import streamlit as st
 
 import auth
 import database as db
 
 
-@auth.require_role("ADMIN")
-def render_admin() -> None:
-    """Affiche le panneau d'administration (protégé par le rôle ADMIN)."""
-    st.markdown("## 🛠️ Administration des utilisateurs")
+# --------------------------------------------------------------------------- #
+# Onglet : Tableau de bord
+# --------------------------------------------------------------------------- #
+def _render_dashboard() -> None:
+    st.markdown("### 📊 Vue d'ensemble")
 
+    s = db.users_summary()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("👥 Utilisateurs", s["total"])
+    c2.metric("🟢 Actifs", s["actifs"])
+    c3.metric("🛡️ Admins", s["admins"])
+    c4.metric("🔬 Analyses (total)", db.usage_total())
+
+    if s["inactifs"] or s["verrouilles"]:
+        st.caption(f"🔴 Inactifs : {s['inactifs']}  ·  🔒 Verrouillés : {s['verrouilles']}")
+
+    # --- Analyses par période ---
+    now = datetime.utcnow()
+    jour0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    debuts = {
+        "jour": jour0,
+        "semaine": jour0 - timedelta(days=now.weekday()),
+        "mois": jour0.replace(day=1),
+        "an": jour0.replace(month=1, day=1),
+    }
+    st.markdown("### 🔬 Analyses effectuées")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Aujourd'hui", db.usage_global_since(debuts["jour"].isoformat(timespec="seconds")))
+    p2.metric("Cette semaine", db.usage_global_since(debuts["semaine"].isoformat(timespec="seconds")))
+    p3.metric("Ce mois", db.usage_global_since(debuts["mois"].isoformat(timespec="seconds")))
+    p4.metric("Cette année", db.usage_global_since(debuts["an"].isoformat(timespec="seconds")))
+
+    # --- Graphique des 14 derniers jours ---
+    st.markdown("### 📈 Analyses sur 14 jours")
+    jours = [jour0 - timedelta(days=i) for i in range(13, -1, -1)]
+    rows = db.usage_by_day(jours[0].isoformat(timespec="seconds")) or []
+    counts = {r["jour"]: int(r["n"]) for r in rows}
+    chart = pd.DataFrame({
+        "Date": [d.strftime("%d/%m") for d in jours],
+        "Analyses": [counts.get(d.strftime("%Y-%m-%d"), 0) for d in jours],
+    })
+    st.bar_chart(chart, x="Date", y="Analyses", color="#16a34a")
+
+    # --- Top utilisateurs ---
+    st.markdown("### 🏆 Top utilisateurs")
+    top = db.top_users_by_usage(10)
+    if top:
+        df = pd.DataFrame(top).rename(columns={"email": "E-mail", "role": "Rôle", "n": "Analyses"})
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.caption("Aucune donnée.")
+
+    # --- Activité récente ---
+    st.markdown("### 🕑 Activité récente")
+    recent = db.recent_usage(15)
+    if recent:
+        df = pd.DataFrame(recent).rename(columns={"email": "E-mail", "created_at": "Date (UTC)"})
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.caption("Aucune analyse pour le moment.")
+
+
+# --------------------------------------------------------------------------- #
+# Onglet : Gestion des utilisateurs
+# --------------------------------------------------------------------------- #
+def _render_users() -> None:
     current = auth.get_current_user()
 
     # --- Création rapide d'un utilisateur ---
@@ -45,15 +106,12 @@ def render_admin() -> None:
     # --- Recherche ---
     search = st.text_input("🔎 Rechercher (e-mail ou nom)", key="admin_search")
     users = db.list_users(search)
-
     st.caption(f"{len(users)} utilisateur(s)")
 
-    # --- Liste des utilisateurs ---
     for u in users:
         actif = bool(int(u.get("is_active", 1)))
         badge = "🟢" if actif else "🔴"
-        titre = f"{badge} {u['email']}  ·  {u['role']}"
-        with st.expander(titre):
+        with st.expander(f"{badge} {u['email']}  ·  {u['role']}"):
             st.markdown(
                 f"**ID :** {u['id']}  ·  **Nom :** {u.get('full_name') or '—'}  \n"
                 f"**Créé le :** {u.get('created_at') or '—'}  ·  "
@@ -62,15 +120,13 @@ def render_admin() -> None:
             )
 
             est_soi_meme = current and current["id"] == u["id"]
-
             col1, col2 = st.columns(2)
 
-            # Changement de rôle
+            # Rôle
             with col1:
                 nouveau_role = st.selectbox(
                     "Rôle", auth.ROLES, index=auth.ROLES.index(u["role"]),
-                    key=f"role_{u['id']}",
-                    disabled=est_soi_meme,  # on ne change pas son propre rôle
+                    key=f"role_{u['id']}", disabled=est_soi_meme,
                 )
                 if not est_soi_meme and st.button("Appliquer le rôle", key=f"role_btn_{u['id']}"):
                     db.update_role(u["id"], nouveau_role)
@@ -90,11 +146,9 @@ def render_admin() -> None:
                         db.set_active(u["id"], True)
                         st.rerun()
 
-            # Réinitialisation du mot de passe
+            # Reset mot de passe
             with st.form(f"reset_{u['id']}"):
-                new_pw = st.text_input(
-                    "Nouveau mot de passe", type="password", key=f"pw_{u['id']}"
-                )
+                new_pw = st.text_input("Nouveau mot de passe", type="password", key=f"pw_{u['id']}")
                 reset = st.form_submit_button("🔑 Réinitialiser le mot de passe")
             if reset:
                 if len(new_pw) < auth.MIN_PASSWORD_LEN:
@@ -104,7 +158,7 @@ def render_admin() -> None:
                     db.reset_failed(u["id"])
                     st.success("Mot de passe réinitialisé.")
 
-            # Quotas d'analyses (0 = pas de limite pour cette période)
+            # Quotas d'analyses (0 = illimité)
             with st.form(f"quota_{u['id']}"):
                 st.markdown("**Quotas d'analyses** (0 = illimité)")
                 q1, q2, q3, q4 = st.columns(4)
@@ -131,3 +185,17 @@ def render_admin() -> None:
                     db.delete_user(u["id"])
                     st.warning("Compte supprimé.")
                     st.rerun()
+
+
+# --------------------------------------------------------------------------- #
+# Page admin
+# --------------------------------------------------------------------------- #
+@auth.require_role("ADMIN")
+def render_admin() -> None:
+    """Affiche le panneau d'administration (protégé par le rôle ADMIN)."""
+    st.markdown("## 🛠️ Administration")
+    tab_dash, tab_users = st.tabs(["📊 Tableau de bord", "👥 Utilisateurs"])
+    with tab_dash:
+        _render_dashboard()
+    with tab_users:
+        _render_users()
