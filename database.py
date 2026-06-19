@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 try:
@@ -458,3 +458,31 @@ def delete_analysis(analysis_id: int, user_id: int) -> None:
 
 def delete_all_analyses(user_id: int) -> None:
     _run("DELETE FROM analyses WHERE user_id = ?", (user_id,))
+
+
+def count_stored_analyses() -> int:
+    row = _run("SELECT COUNT(*) AS n FROM analyses", fetch="one")
+    return int(row["n"] or 0) if row else 0
+
+
+def count_analyses_before(before_iso: str) -> int:
+    row = _run("SELECT COUNT(*) AS n FROM analyses WHERE created_at < ?",
+               (before_iso,), fetch="one")
+    return int(row["n"] or 0) if row else 0
+
+
+def delete_analyses_before(before_iso: str) -> None:
+    """Supprime toutes les analyses antérieures à `before_iso` (purge globale)."""
+    _run("DELETE FROM analyses WHERE created_at < ?", (before_iso,))
+
+
+def retention_cutoff_iso() -> Optional[str]:
+    """Date limite de rétention (ISO) selon ANALYSIS_RETENTION_MONTHS, ou None."""
+    val = get_config("ANALYSIS_RETENTION_MONTHS")
+    try:
+        months = int(val) if val not in (None, "") else 0
+    except ValueError:
+        months = 0
+    if months <= 0:
+        return None
+    return (datetime.utcnow() - timedelta(days=months * 30)).isoformat(timespec="seconds")
