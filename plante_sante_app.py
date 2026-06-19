@@ -42,9 +42,70 @@ MAX_PHOTOS = 4
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 720px; }
-      .stButton button { width: 100%; border-radius: 12px; height: 3rem; font-size: 1.05rem; }
-      div[data-testid="stMetricValue"] { font-size: 1.6rem; }
+      @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
+
+      html, body, [class*="css"] { font-family: 'Nunito', sans-serif; }
+
+      /* Fond doux dégradé nature */
+      .stApp {
+        background: linear-gradient(180deg, #f4fbf5 0%, #ffffff 45%);
+      }
+      .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 760px; }
+
+      /* En-tête héro */
+      .hero {
+        background: linear-gradient(135deg, #15803d 0%, #22c55e 55%, #4ade80 100%);
+        border-radius: 22px;
+        padding: 1.6rem 1.4rem;
+        color: #ffffff;
+        box-shadow: 0 12px 30px rgba(22, 163, 74, 0.28);
+        margin-bottom: 1.4rem;
+      }
+      .hero h1 { margin: 0; font-size: 2rem; font-weight: 800; letter-spacing: -0.5px; }
+      .hero p { margin: .35rem 0 0; font-size: 1rem; opacity: .95; font-weight: 600; }
+
+      /* Boutons */
+      .stButton button {
+        width: 100%; border-radius: 14px; height: 3rem; font-size: 1.05rem;
+        font-weight: 700; border: none;
+        background: linear-gradient(135deg, #16a34a, #22c55e);
+        color: #fff; transition: transform .08s ease, box-shadow .2s ease;
+        box-shadow: 0 6px 16px rgba(22,163,74,.25);
+      }
+      .stButton button:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(22,163,74,.35); color:#fff; }
+      .stButton button:active { transform: translateY(0); }
+
+      /* Cartes métriques */
+      div[data-testid="stMetric"] {
+        background: #ffffff; border: 1px solid #d9efdd; border-radius: 16px;
+        padding: .9rem .7rem; box-shadow: 0 4px 14px rgba(20,39,26,.05); text-align: center;
+      }
+      div[data-testid="stMetricValue"] { font-size: 1.5rem; font-weight: 800; color: #15803d; }
+      div[data-testid="stMetricLabel"] { justify-content: center; font-weight: 700; color:#436b4d; }
+
+      /* Barre de progression */
+      .stProgress > div > div > div > div {
+        background: linear-gradient(90deg, #f59e0b, #22c55e);
+      }
+
+      /* Expanders en cartes */
+      [data-testid="stExpander"] {
+        border: 1px solid #d9efdd; border-radius: 16px; overflow: hidden;
+        box-shadow: 0 4px 14px rgba(20,39,26,.05); background:#fff; margin-bottom:.5rem;
+      }
+      [data-testid="stExpander"] summary { font-weight: 700; }
+
+      /* Images arrondies */
+      div[data-testid="stImage"] img { border-radius: 14px; }
+
+      /* Titres de section */
+      h4 { color: #15803d; font-weight: 800; margin-top: 1.3rem; }
+
+      /* Radio en pilules */
+      div[role="radiogroup"] label {
+        background:#fff; border:1px solid #d9efdd; border-radius:999px;
+        padding:.3rem .9rem; margin-right:.4rem; font-weight:700;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -387,10 +448,14 @@ def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
 # --------------------------------------------------------------------------- #
 # Interface principale
 # --------------------------------------------------------------------------- #
-st.title("🌿 Plant Doctor")
-st.caption(
-    "Prenez plusieurs photos de votre plante (sous différents angles) — "
-    "l'IA analyse sa santé en détail et propose des solutions illustrées."
+st.markdown(
+    """
+    <div class="hero">
+      <h1>🌿 Plant Doctor</h1>
+      <p>Photographiez votre plante — l'IA diagnostique sa santé et propose des solutions illustrées.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 api_key = get_api_key()

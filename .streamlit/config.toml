@@ -1,0 +1,8 @@
+# Thème "nature" pour Plant Doctor
+[theme]
+base = "light"
+primaryColor = "#16a34a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef7ef"
+textColor = "#14271a"
+font = "sans serif"
