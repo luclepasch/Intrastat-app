@@ -38,7 +38,7 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
-VERSION = "1.3"
+VERSION = "1.4"
 VERSION_DATE = "juin 2026"
 
 st.markdown(
@@ -181,14 +181,58 @@ SCHEMA = {
         },
         "conditions_culture": {
             "type": "object",
-            "description": "État/conseils sur les conditions de culture, déduits des photos.",
+            "description": "Conseils de culture adaptés à cette plante, déduits aussi des photos.",
             "properties": {
-                "arrosage": {"type": "string"},
+                "arrosage": {
+                    "type": "object",
+                    "description": "Conseils d'arrosage adaptés à l'espèce et à la saison.",
+                    "properties": {
+                        "frequence": {
+                            "type": "string",
+                            "description": "À quelle fréquence arroser (ex: 'tous les 7-10 jours en été').",
+                        },
+                        "methode": {
+                            "type": "string",
+                            "description": "Comment arroser (quantité, par le haut/bas, eau, drainage…).",
+                        },
+                        "signes_de_manque": {
+                            "type": "string",
+                            "description": "Signes visibles d'un manque d'eau.",
+                        },
+                        "signes_d_exces": {
+                            "type": "string",
+                            "description": "Signes visibles d'un excès d'eau / sur-arrosage.",
+                        },
+                    },
+                    "required": ["frequence", "methode", "signes_de_manque", "signes_d_exces"],
+                    "additionalProperties": False,
+                },
                 "lumiere": {"type": "string"},
                 "temperature_humidite": {"type": "string"},
-                "substrat_engrais": {"type": "string"},
+                "substrat": {
+                    "type": "object",
+                    "description": "Substrats adaptés à cette plante.",
+                    "properties": {
+                        "melange_ideal": {
+                            "type": "string",
+                            "description": "Composition de substrat idéale (ex: '2/3 terreau + 1/3 perlite').",
+                        },
+                        "conseilles": {
+                            "type": "array",
+                            "description": "Substrats/composants conseillés.",
+                            "items": {"type": "string"},
+                        },
+                        "deconseilles": {
+                            "type": "array",
+                            "description": "Substrats/composants à éviter.",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["melange_ideal", "conseilles", "deconseilles"],
+                    "additionalProperties": False,
+                },
             },
-            "required": ["arrosage", "lumiere", "temperature_humidite", "substrat_engrais"],
+            "required": ["arrosage", "lumiere", "temperature_humidite", "substrat"],
             "additionalProperties": False,
         },
         "problemes": {
@@ -259,7 +303,10 @@ SYSTEM_PROMPT = (
     "fleurs…), tu réalises un diagnostic détaillé. Croise les informations de toutes les photos "
     "pour identifier la plante, évaluer son état de santé, et détecter maladies, parasites, "
     "carences nutritionnelles et stress (sur-arrosage, manque de lumière, etc.). "
-    "Tu proposes des solutions concrètes, réalisables par un particulier. "
+    "Tu proposes des solutions concrètes, réalisables par un particulier, ainsi que "
+    "des conseils d'arrosage précis (fréquence, méthode, signes de manque/d'excès) et "
+    "des recommandations de substrats adaptés à l'espèce (mélange idéal, composants "
+    "conseillés et à éviter). "
     "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
     "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
     "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
@@ -312,7 +359,7 @@ def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4500,
+        max_tokens=5000,
         system=SYSTEM_PROMPT,
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
         messages=[{"role": "user", "content": content}],
@@ -389,11 +436,43 @@ def afficher_diagnostic(diag: dict) -> None:
     cc = diag.get("conditions_culture", {})
     if cc:
         st.markdown("#### 🌡️ Conditions de culture")
-        cca, ccb = st.columns(2)
-        cca.markdown(f"💧 **Arrosage**\n\n{cc.get('arrosage', '—')}")
-        cca.markdown(f"☀️ **Lumière**\n\n{cc.get('lumiere', '—')}")
-        ccb.markdown(f"🌡️ **Température / humidité**\n\n{cc.get('temperature_humidite', '—')}")
-        ccb.markdown(f"🪴 **Substrat / engrais**\n\n{cc.get('substrat_engrais', '—')}")
+
+        # Arrosage détaillé
+        arr = cc.get("arrosage", {})
+        if isinstance(arr, dict):
+            with st.expander("💧 Conseils d'arrosage", expanded=True):
+                if arr.get("frequence"):
+                    st.markdown(f"**Fréquence :** {arr['frequence']}")
+                if arr.get("methode"):
+                    st.markdown(f"**Méthode :** {arr['methode']}")
+                if arr.get("signes_de_manque"):
+                    st.markdown(f"🥵 **Signes de manque d'eau :** {arr['signes_de_manque']}")
+                if arr.get("signes_d_exces"):
+                    st.markdown(f"💦 **Signes d'excès d'eau :** {arr['signes_d_exces']}")
+        elif arr:
+            st.markdown(f"💧 **Arrosage :** {arr}")
+
+        # Substrat conseillé / déconseillé
+        sub = cc.get("substrat", {})
+        if isinstance(sub, dict):
+            with st.expander("🪴 Substrats conseillés & déconseillés", expanded=True):
+                if sub.get("melange_ideal"):
+                    st.markdown(f"🌱 **Mélange idéal :** {sub['melange_ideal']}")
+                if sub.get("conseilles"):
+                    st.markdown("✅ **Conseillés :**")
+                    for s in sub["conseilles"]:
+                        st.markdown(f"- {s}")
+                if sub.get("deconseilles"):
+                    st.markdown("🚫 **À éviter :**")
+                    for s in sub["deconseilles"]:
+                        st.markdown(f"- {s}")
+        elif sub:
+            st.markdown(f"🪴 **Substrat :** {sub}")
+
+        # Lumière & climat
+        col_l, col_t = st.columns(2)
+        col_l.markdown(f"☀️ **Lumière**\n\n{cc.get('lumiere', '—')}")
+        col_t.markdown(f"🌡️ **Température / humidité**\n\n{cc.get('temperature_humidite', '—')}")
 
     # Problèmes détectés
     problemes = diag.get("problemes", [])
