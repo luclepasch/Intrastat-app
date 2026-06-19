@@ -104,6 +104,27 @@ def render_admin() -> None:
                     db.reset_failed(u["id"])
                     st.success("Mot de passe réinitialisé.")
 
+            # Quotas d'analyses (0 = pas de limite pour cette période)
+            with st.form(f"quota_{u['id']}"):
+                st.markdown("**Quotas d'analyses** (0 = illimité)")
+                q1, q2, q3, q4 = st.columns(4)
+                qd = q1.number_input("Jour", min_value=0, step=1,
+                                     value=int(u.get("quota_day") or 0), key=f"qd_{u['id']}")
+                qw = q2.number_input("Semaine", min_value=0, step=1,
+                                     value=int(u.get("quota_week") or 0), key=f"qw_{u['id']}")
+                qm = q3.number_input("Mois", min_value=0, step=1,
+                                     value=int(u.get("quota_month") or 0), key=f"qm_{u['id']}")
+                qy = q4.number_input("An", min_value=0, step=1,
+                                     value=int(u.get("quota_year") or 0), key=f"qy_{u['id']}")
+                quota_ok = st.form_submit_button("💾 Enregistrer les quotas")
+            if quota_ok:
+                db.set_user_quota(
+                    u["id"],
+                    int(qd) or None, int(qw) or None, int(qm) or None, int(qy) or None,
+                )
+                st.success("Quotas mis à jour.")
+                st.rerun()
+
             # Suppression
             if not est_soi_meme:
                 if st.button("🗑️ Supprimer ce compte", key=f"del_{u['id']}"):

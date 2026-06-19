@@ -27,6 +27,24 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_back_camera_input import back_camera_input
 
+# Intégration facultative de la gestion des utilisateurs / quotas.
+# Si ces modules sont absents (app lancée seule, sans authentification),
+# Plant Doctor fonctionne normalement sans aucune restriction.
+try:
+    import auth as _auth
+    import quotas as _quotas
+    _USER_MGMT = True
+except Exception:
+    _USER_MGMT = False
+
+
+def _current_uid():
+    """Identifiant de l'utilisateur connecté, ou None si pas d'authentification."""
+    if not _USER_MGMT:
+        return None
+    user = _auth.get_current_user()
+    return user["id"] if user else None
+
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
@@ -821,6 +839,13 @@ if photos:
                 st.session_state["photos"] = [x for x in photos if x["id"] != p["id"]]
                 st.rerun()
 
+    # Quota d'analyses restant (si authentification active)
+    uid = _current_uid()
+    if uid is not None:
+        cap = _quotas.quota_caption(uid)
+        if cap:
+            st.caption(cap)
+
     col_a, col_b = st.columns(2)
     lancer = col_a.button(tr("analyze"), type="primary")
     if col_b.button(tr("clear_all")):
@@ -829,6 +854,13 @@ if photos:
         st.rerun()
 
     if lancer:
+        # Vérification du quota avant toute consommation de l'API
+        if uid is not None:
+            autorise, msg_quota, _ = _quotas.check_quota(uid)
+            if not autorise:
+                st.error("⛔ " + msg_quota)
+                st.stop()
+
         client = anthropic.Anthropic(api_key=api_key)
         try:
             with st.spinner(tr("analyzing", n=len(photos))):
@@ -836,6 +868,8 @@ if photos:
                     client, [(p["bytes"], p["media_type"]) for p in photos], st.session_state["lang"]
                 )
             st.session_state["diagnostic"] = diag
+            if uid is not None:
+                _quotas.record_analysis(uid)  # comptabilise l'analyse effectuée
             if diag.get("est_une_plante", True):
                 st.session_state["historique"].append({
                     "id": uuid.uuid4().hex,
