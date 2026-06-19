@@ -61,12 +61,32 @@ def _thumb_settings() -> tuple[int, int]:
     return max(200, min(2000, max_side)), max(30, min(95, quality))
 
 
+def _corriger_orientation(image_bytes: bytes, media_type: str) -> tuple[bytes, str]:
+    """Applique l'orientation EXIF (photos de smartphone souvent tournées).
+
+    Ne ré-encode que si une rotation est réellement nécessaire.
+    """
+    from PIL import Image, ImageOps
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        orient = img.getexif().get(0x0112)  # balise Orientation EXIF
+        if orient in (None, 1):
+            return image_bytes, media_type  # déjà droite, rien à faire
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return image_bytes, media_type
+
+
 def _thumbnail_bytes(image_bytes: bytes) -> bytes:
-    """Réduit/compresse une image et renvoie les octets JPEG."""
-    from PIL import Image
+    """Réduit/compresse une image (orientation EXIF appliquée) -> octets JPEG."""
+    from PIL import Image, ImageOps
 
     max_side, quality = _thumb_settings()
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_bytes))).convert("RGB")
     img.thumbnail((max_side, max_side))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
@@ -877,6 +897,8 @@ def _empreinte(image_bytes: bytes) -> str:
 
 
 def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
+    # Corrige l'orientation EXIF avant tout stockage / analyse / affichage
+    image_bytes, media_type = _corriger_orientation(image_bytes, media_type)
     photos = st.session_state.setdefault("photos", [])
     empreinte = _empreinte(image_bytes)
     if any(p["id"] == empreinte for p in photos):
