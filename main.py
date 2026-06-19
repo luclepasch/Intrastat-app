@@ -39,10 +39,16 @@ from user_profile import render_profile  # noqa: E402
 APP_FILE = "plante_sante_app.py"  # application métier à protéger
 
 # --------------------------------------------------------------------------- #
-# Initialisation
+# Initialisation (exécutée UNE seule fois par processus, pas à chaque interaction)
 # --------------------------------------------------------------------------- #
-db.init_db()
-seed_warning = auth.ensure_seed_admin()
+@st.cache_resource(show_spinner=False)
+def _bootstrap_database():
+    """Crée les tables et l'admin initial une seule fois (mise en cache)."""
+    db.init_db()
+    return auth.ensure_seed_admin()
+
+
+seed_warning = _bootstrap_database()
 
 
 # --------------------------------------------------------------------------- #

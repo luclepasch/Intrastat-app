@@ -68,9 +68,13 @@ def _period_start(now: datetime, period: str) -> str:
 
 
 def usage_counts(user_id: int, now: datetime = None) -> dict:
-    """Nombre d'analyses déjà effectuées sur chaque période."""
+    """Nombre d'analyses déjà effectuées sur chaque période (1 seule requête)."""
     now = now or datetime.utcnow()
-    return {p: db.count_usage_since(user_id, _period_start(now, p)) for p in PERIODES}
+    return db.usage_counts_multi(
+        user_id,
+        _period_start(now, "day"), _period_start(now, "week"),
+        _period_start(now, "month"), _period_start(now, "year"),
+    )
 
 
 def check_quota(user_id: int) -> tuple[bool, str, dict]:

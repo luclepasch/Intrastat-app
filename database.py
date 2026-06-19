@@ -18,6 +18,7 @@ utilisez PostgreSQL (Neon, Supabase, Railway…).
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime
 from typing import Any, Optional
 
@@ -52,17 +53,47 @@ _IS_PG = BACKEND in ("postgres", "postgresql", "pg")
 # Connexion bas niveau
 # --------------------------------------------------------------------------- #
 def _connect():
-    """Ouvre une connexion vers le backend configuré."""
+    """Ouvre une connexion vers le backend configuré (en mode autocommit)."""
     if _IS_PG:
         import psycopg2  # import paresseux : requis seulement en mode PostgreSQL
 
         if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL est requis lorsque DB_BACKEND=postgres.")
-        return psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True  # évite les transactions "idle" qui ralentissent
+        return conn
     import sqlite3
 
     conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
+    conn.isolation_level = None  # autocommit
     return conn
+
+
+# Connexion persistante réutilisée entre les requêtes (évite un handshake TLS à
+# chaque appel — c'est LE gain de performance principal avec un pooler distant).
+_conn = None
+_lock = threading.RLock()
+
+
+def _get_connection():
+    """Renvoie la connexion partagée, en la (ré)ouvrant si nécessaire."""
+    global _conn
+    with _lock:
+        if _conn is None:
+            _conn = _connect()
+        return _conn
+
+
+def _reset_connection() -> None:
+    """Ferme/oublie la connexion courante (forcera une reconnexion)."""
+    global _conn
+    with _lock:
+        try:
+            if _conn is not None:
+                _conn.close()
+        except Exception:
+            pass
+        _conn = None
 
 
 def _adapt(query: str) -> str:
@@ -70,32 +101,44 @@ def _adapt(query: str) -> str:
     return query.replace("?", "%s") if _IS_PG else query
 
 
+def _is_connection_error(exc: Exception) -> bool:
+    """Vrai si l'erreur indique une connexion perdue (à reconnecter)."""
+    return type(exc).__name__ in ("OperationalError", "InterfaceError")
+
+
 def _run(query: str, params: tuple = (), fetch: Optional[str] = None) -> Any:
-    """Exécute une requête. fetch ∈ {None, 'one', 'all', 'id'}."""
-    conn = _connect()
-    try:
-        cur = conn.cursor()
-        cur.execute(_adapt(query), params)
+    """Exécute une requête sur la connexion partagée. fetch ∈ {None,'one','all','id'}.
 
-        if fetch == "one":
-            row = cur.fetchone()
-            cols = [d[0] for d in cur.description] if cur.description else []
-            conn.commit()
-            return dict(zip(cols, row)) if row else None
-
-        if fetch == "all":
-            rows = cur.fetchall()
-            cols = [d[0] for d in cur.description] if cur.description else []
-            conn.commit()
-            return [dict(zip(cols, r)) for r in rows]
-
-        conn.commit()
-        if fetch == "id":
-            # Récupère l'identifiant du dernier enregistrement inséré
-            return getattr(cur, "lastrowid", None)
-        return None
-    finally:
-        conn.close()
+    Réessaie une fois en cas de connexion perdue (Supabase ferme les connexions
+    inactives) ; les autres erreurs SQL sont propagées immédiatement.
+    """
+    last_err = None
+    for attempt in range(2):
+        try:
+            with _lock:
+                conn = _get_connection()
+                cur = conn.cursor()
+                cur.execute(_adapt(query), params)
+                if fetch == "one":
+                    row = cur.fetchone()
+                    cols = [d[0] for d in cur.description] if cur.description else []
+                    cur.close()
+                    return dict(zip(cols, row)) if row else None
+                if fetch == "all":
+                    rows = cur.fetchall()
+                    cols = [d[0] for d in cur.description] if cur.description else []
+                    cur.close()
+                    return [dict(zip(cols, r)) for r in rows]
+                last_id = getattr(cur, "lastrowid", None)
+                cur.close()
+                return last_id if fetch == "id" else None
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            if _is_connection_error(exc) and attempt == 0:
+                _reset_connection()  # reconnexion puis nouvel essai
+                continue
+            raise
+    raise last_err
 
 
 def _now() -> str:
@@ -263,6 +306,26 @@ def count_usage_since(user_id: int, since_iso: str) -> int:
         (user_id, since_iso), fetch="one",
     )
     return int(row["n"]) if row else 0
+
+
+def usage_counts_multi(user_id: int, day_iso: str, week_iso: str,
+                       month_iso: str, year_iso: str) -> dict:
+    """Compte les analyses sur les 4 périodes en UNE seule requête."""
+    row = _run(
+        """SELECT
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS d,
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS w,
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS m,
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS y
+           FROM usage_log WHERE user_id = ?""",
+        (day_iso, week_iso, month_iso, year_iso, user_id), fetch="one",
+    )
+    if not row:
+        return {"day": 0, "week": 0, "month": 0, "year": 0}
+    return {
+        "day": int(row["d"] or 0), "week": int(row["w"] or 0),
+        "month": int(row["m"] or 0), "year": int(row["y"] or 0),
+    }
 
 
 def set_user_quota(user_id: int, day, week, month, year) -> None:
