@@ -38,7 +38,7 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
-VERSION = "1.5"
+VERSION = "1.6"
 VERSION_DATE = "juin 2026"
 
 st.markdown(
@@ -207,7 +207,34 @@ SCHEMA = {
                     "required": ["frequence", "methode", "signes_de_manque", "signes_d_exces"],
                     "additionalProperties": False,
                 },
-                "lumiere": {"type": "string"},
+                "lumiere": {
+                    "type": "object",
+                    "description": "Conseils d'exposition à la lumière adaptés à l'espèce.",
+                    "properties": {
+                        "exposition": {
+                            "type": "string",
+                            "description": "Exposition idéale (plein soleil, mi-ombre, lumière vive indirecte, ombre…).",
+                        },
+                        "emplacement": {
+                            "type": "string",
+                            "description": "Où placer la plante (ex: 'près d'une fenêtre orientée est').",
+                        },
+                        "duree": {
+                            "type": "string",
+                            "description": "Durée/intensité de lumière recommandée par jour.",
+                        },
+                        "a_eviter": {
+                            "type": "string",
+                            "description": "Expositions à éviter (ex: soleil direct brûlant derrière une vitre).",
+                        },
+                        "signes_mauvais_eclairage": {
+                            "type": "string",
+                            "description": "Signes d'un manque ou d'un excès de lumière.",
+                        },
+                    },
+                    "required": ["exposition", "emplacement", "duree", "a_eviter", "signes_mauvais_eclairage"],
+                    "additionalProperties": False,
+                },
                 "temperature_humidite": {"type": "string"},
                 "substrat": {
                     "type": "object",
@@ -315,8 +342,9 @@ SYSTEM_PROMPT = (
     "Tu proposes des solutions concrètes, réalisables par un particulier, ainsi que "
     "des conseils d'arrosage précis (fréquence, méthode, signes de manque/d'excès) et "
     "des recommandations de substrats adaptés à l'espèce (mélange idéal, composants "
-    "conseillés et à éviter), ainsi que des astuces naturelles traditionnelles "
-    "('de grand-mère') pertinentes pour cette plante. "
+    "conseillés et à éviter), des conseils d'exposition à la lumière (exposition idéale, "
+    "emplacement, durée, à éviter, signes d'un mauvais éclairage), ainsi que des astuces "
+    "naturelles traditionnelles ('de grand-mère') pertinentes pour cette plante. "
     "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
     "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
     "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
@@ -369,7 +397,7 @@ def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=5000,
+        max_tokens=5500,
         system=SYSTEM_PROMPT,
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
         messages=[{"role": "user", "content": content}],
@@ -479,10 +507,25 @@ def afficher_diagnostic(diag: dict) -> None:
         elif sub:
             st.markdown(f"🪴 **Substrat :** {sub}")
 
-        # Lumière & climat
-        col_l, col_t = st.columns(2)
-        col_l.markdown(f"☀️ **Lumière**\n\n{cc.get('lumiere', '—')}")
-        col_t.markdown(f"🌡️ **Température / humidité**\n\n{cc.get('temperature_humidite', '—')}")
+        # Exposition à la lumière
+        lum = cc.get("lumiere", {})
+        if isinstance(lum, dict):
+            with st.expander("☀️ Exposition à la lumière", expanded=True):
+                if lum.get("exposition"):
+                    st.markdown(f"**Exposition idéale :** {lum['exposition']}")
+                if lum.get("emplacement"):
+                    st.markdown(f"📍 **Emplacement :** {lum['emplacement']}")
+                if lum.get("duree"):
+                    st.markdown(f"⏱️ **Durée / intensité :** {lum['duree']}")
+                if lum.get("a_eviter"):
+                    st.markdown(f"🚫 **À éviter :** {lum['a_eviter']}")
+                if lum.get("signes_mauvais_eclairage"):
+                    st.markdown(f"🔎 **Signes d'un mauvais éclairage :** {lum['signes_mauvais_eclairage']}")
+        elif lum:
+            st.markdown(f"☀️ **Lumière :** {lum}")
+
+        # Température / humidité
+        st.markdown(f"🌡️ **Température / humidité :** {cc.get('temperature_humidite', '—')}")
 
     # Problèmes détectés
     problemes = diag.get("problemes", [])
