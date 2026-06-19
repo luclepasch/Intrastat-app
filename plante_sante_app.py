@@ -2,9 +2,10 @@
 🌿 Plant Doctor — Analyseur de santé des plantes
 ================================================
 
-Application web optimisée pour smartphone : prenez une photo d'une plante avec
-l'appareil photo de votre téléphone, l'IA de vision de Claude analyse son état
-de santé et propose des solutions concrètes.
+Application web optimisée pour smartphone : prenez une ou plusieurs photos d'une
+plante (jusqu'à 4, sous différents angles), l'IA de vision de Claude analyse en
+détail son état de santé, propose des solutions concrètes et illustre le
+diagnostic (dessin schématique + photos d'exemples).
 
 Lancement local :
     streamlit run plante_sante_app.py
@@ -15,11 +16,14 @@ ou ajoutez-la dans .streamlit/secrets.toml :
 """
 
 import base64
+import hashlib
 import json
 import os
+import urllib.parse
 
 import anthropic
 import streamlit as st
+import streamlit.components.v1 as components
 
 # --------------------------------------------------------------------------- #
 # Configuration de la page (mobile-first)
@@ -32,8 +36,8 @@ st.set_page_config(
 )
 
 MODEL = "claude-opus-4-8"
+MAX_PHOTOS = 4
 
-# Quelques ajustements CSS pour un rendu agréable sur petit écran
 st.markdown(
     """
     <style>
@@ -55,7 +59,6 @@ def get_api_key() -> str | None:
         if "ANTHROPIC_API_KEY" in st.secrets:
             return st.secrets["ANTHROPIC_API_KEY"]
     except Exception:
-        # st.secrets lève une exception si aucun fichier secrets.toml n'existe
         pass
     return os.environ.get("ANTHROPIC_API_KEY")
 
@@ -68,133 +71,153 @@ SCHEMA = {
     "properties": {
         "est_une_plante": {
             "type": "boolean",
-            "description": "True si l'image contient bien une plante analysable.",
+            "description": "True si les images contiennent bien une plante analysable.",
         },
-        "plante": {
-            "type": "string",
-            "description": "Nom commun probable de la plante (en français).",
-        },
-        "nom_latin": {
-            "type": "string",
-            "description": "Nom latin/botanique si identifiable, sinon chaîne vide.",
-        },
+        "plante": {"type": "string", "description": "Nom commun probable (en français)."},
+        "nom_latin": {"type": "string", "description": "Nom latin/botanique, sinon chaîne vide."},
+        "famille": {"type": "string", "description": "Famille botanique, sinon chaîne vide."},
         "etat_general": {
             "type": "string",
             "enum": ["Bon", "Moyen", "Mauvais", "Inconnu"],
-            "description": "Évaluation globale de l'état de santé.",
         },
         "score_sante": {
             "type": "integer",
             "description": "Score de santé de 0 (mourante) à 100 (parfaite santé).",
         },
-        "resume": {
+        "resume": {"type": "string", "description": "Résumé d'une à deux phrases."},
+        "identification_details": {
             "type": "string",
-            "description": "Résumé d'une à deux phrases sur l'état de la plante.",
+            "description": "Caractéristiques visibles ayant permis l'identification (feuilles, port, fleurs…).",
+        },
+        "analyse_detaillee": {
+            "type": "string",
+            "description": "Analyse approfondie combinant TOUTES les photos fournies (2-4 phrases riches).",
+        },
+        "conditions_culture": {
+            "type": "object",
+            "description": "État/conseils sur les conditions de culture, déduits des photos.",
+            "properties": {
+                "arrosage": {"type": "string"},
+                "lumiere": {"type": "string"},
+                "temperature_humidite": {"type": "string"},
+                "substrat_engrais": {"type": "string"},
+            },
+            "required": ["arrosage", "lumiere", "temperature_humidite", "substrat_engrais"],
+            "additionalProperties": False,
         },
         "problemes": {
             "type": "array",
-            "description": "Liste des problèmes détectés (maladies, parasites, carences, stress).",
+            "description": "Problèmes détectés (maladies, parasites, carences, stress).",
             "items": {
                 "type": "object",
                 "properties": {
                     "nom": {"type": "string", "description": "Nom court du problème."},
-                    "description": {
-                        "type": "string",
-                        "description": "Symptômes observés sur la photo et cause probable.",
+                    "symptomes": {"type": "string", "description": "Symptômes précis observés sur les photos."},
+                    "cause": {"type": "string", "description": "Cause probable."},
+                    "gravite": {"type": "string", "enum": ["Faible", "Modérée", "Élevée"]},
+                    "traitement": {
+                        "type": "array",
+                        "description": "Étapes de traitement concrètes pour ce problème.",
+                        "items": {"type": "string"},
                     },
-                    "gravite": {
+                    "terme_recherche_image": {
                         "type": "string",
-                        "enum": ["Faible", "Modérée", "Élevée"],
+                        "description": "Terme court pour rechercher des photos d'exemples (ex: 'oïdium feuille rosier').",
                     },
                 },
-                "required": ["nom", "description", "gravite"],
+                "required": ["nom", "symptomes", "cause", "gravite", "traitement", "terme_recherche_image"],
                 "additionalProperties": False,
             },
         },
         "solutions": {
             "type": "array",
-            "description": "Actions concrètes pour soigner la plante, ordre de priorité.",
+            "description": "Plan d'action prioritaire (du plus urgent au moins urgent).",
             "items": {"type": "string"},
         },
         "prevention": {
             "type": "array",
-            "description": "Conseils d'entretien pour éviter que les problèmes reviennent.",
+            "description": "Conseils pour éviter que les problèmes reviennent.",
             "items": {"type": "string"},
+        },
+        "calendrier_entretien": {
+            "type": "array",
+            "description": "Routine d'entretien recommandée (gestes réguliers).",
+            "items": {"type": "string"},
+        },
+        "illustration_svg": {
+            "type": "string",
+            "description": (
+                "Un dessin schématique SVG simple et lisible (viewBox, max ~400x360) illustrant la plante "
+                "et localisant les zones atteintes avec de courtes étiquettes en français. "
+                "SVG valide et autonome, sans script. Chaîne vide si non pertinent."
+            ),
         },
         "confiance": {
             "type": "string",
             "enum": ["Faible", "Moyenne", "Élevée"],
-            "description": "Confiance du diagnostic compte tenu de la qualité de la photo.",
+            "description": "Confiance du diagnostic selon la qualité et le nombre de photos.",
         },
     },
     "required": [
-        "est_une_plante",
-        "plante",
-        "nom_latin",
-        "etat_general",
-        "score_sante",
-        "resume",
-        "problemes",
-        "solutions",
-        "prevention",
-        "confiance",
+        "est_une_plante", "plante", "nom_latin", "famille", "etat_general",
+        "score_sante", "resume", "identification_details", "analyse_detaillee",
+        "conditions_culture", "problemes", "solutions", "prevention",
+        "calendrier_entretien", "illustration_svg", "confiance",
     ],
     "additionalProperties": False,
 }
 
 SYSTEM_PROMPT = (
-    "Tu es un expert en phytopathologie et en horticulture. À partir d'une photo, "
-    "tu identifies la plante, tu évalues son état de santé, tu détectes les maladies, "
-    "parasites, carences nutritionnelles et stress (sur-arrosage, manque de lumière, etc.), "
-    "puis tu proposes des solutions concrètes et réalisables par un particulier. "
-    "Réponds toujours en français, de façon claire et bienveillante. "
-    "Si l'image ne contient pas de plante, indique-le via le champ 'est_une_plante'. "
-    "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance "
-    "selon la netteté et le cadrage de la photo."
+    "Tu es un expert en phytopathologie et en horticulture. À partir d'UNE OU PLUSIEURS photos "
+    "de la MÊME plante (prises sous différents angles : plante entière, feuilles, tiges, racines, "
+    "fleurs…), tu réalises un diagnostic détaillé. Croise les informations de toutes les photos "
+    "pour identifier la plante, évaluer son état de santé, et détecter maladies, parasites, "
+    "carences nutritionnelles et stress (sur-arrosage, manque de lumière, etc.). "
+    "Tu proposes des solutions concrètes, réalisables par un particulier. "
+    "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
+    "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
+    "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
+    "netteté, le cadrage et le nombre de photos."
 )
 
 MEDIA_TYPES = {
-    "jpg": "image/jpeg",
-    "jpeg": "image/jpeg",
-    "png": "image/png",
-    "webp": "image/webp",
-    "gif": "image/gif",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+    "webp": "image/webp", "gif": "image/gif",
 }
 
 
-def analyser_plante(client: anthropic.Anthropic, image_bytes: bytes, media_type: str) -> dict:
-    """Envoie la photo à Claude et renvoie le diagnostic structuré (dict)."""
-    image_data = base64.standard_b64encode(image_bytes).decode("utf-8")
+def analyser_plante(client: anthropic.Anthropic, photos: list[tuple[bytes, str]]) -> dict:
+    """Envoie toutes les photos à Claude et renvoie le diagnostic structuré (dict)."""
+    content = []
+    for image_bytes, media_type in photos:
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(image_bytes).decode("utf-8"),
+                },
+            }
+        )
+    content.append(
+        {
+            "type": "text",
+            "text": (
+                f"Voici {len(photos)} photo(s) de la même plante. Analyse en détail son état de "
+                "santé en croisant toutes les images, et propose des solutions. "
+                "Suis strictement le format JSON demandé."
+            ),
+        }
+    )
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=2000,
+        max_tokens=4500,
         system=SYSTEM_PROMPT,
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_data,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Analyse l'état de santé de cette plante et propose des "
-                            "solutions. Suis strictement le format JSON demandé."
-                        ),
-                    },
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
     )
-
     text = next((b.text for b in response.content if b.type == "text"), "{}")
     return json.loads(text)
 
@@ -206,21 +229,29 @@ COULEUR_ETAT = {"Bon": "🟢", "Moyen": "🟡", "Mauvais": "🔴", "Inconnu": "�
 COULEUR_GRAVITE = {"Faible": "🟢", "Modérée": "🟡", "Élevée": "🔴"}
 
 
+def lien_images(terme: str) -> str:
+    """Construit un lien de recherche de photos d'exemples (Google Images)."""
+    q = urllib.parse.quote_plus(terme)
+    return f"https://www.google.com/search?tbm=isch&q={q}"
+
+
 def afficher_diagnostic(diag: dict) -> None:
     if not diag.get("est_une_plante", True):
         st.warning(
-            "🤔 Je n'ai pas reconnu de plante sur cette photo. "
+            "🤔 Je n'ai pas reconnu de plante sur ces photos. "
             "Essayez de cadrer plus près du feuillage, avec une bonne lumière."
         )
         return
 
     plante = diag.get("plante", "Plante inconnue")
     nom_latin = diag.get("nom_latin", "")
+    famille = diag.get("famille", "")
     titre = f"🪴 {plante}"
     if nom_latin:
         titre += f"  ·  *{nom_latin}*"
     st.markdown(f"### {titre}")
-
+    if famille:
+        st.caption(f"Famille : {famille}")
     if diag.get("resume"):
         st.write(diag["resume"])
 
@@ -231,8 +262,36 @@ def afficher_diagnostic(diag: dict) -> None:
     score = int(diag.get("score_sante", 0))
     col2.metric("Score de santé", f"{score}/100")
     col3.metric("Confiance", diag.get("confiance", "—"))
-
     st.progress(max(0, min(100, score)) / 100)
+
+    # Illustration (dessin schématique généré par l'IA)
+    svg = diag.get("illustration_svg", "").strip()
+    if svg.startswith("<svg"):
+        st.markdown("#### 🖼️ Schéma illustré")
+        components.html(
+            f'<div style="display:flex;justify-content:center;">{svg}</div>',
+            height=380,
+        )
+
+    # Identification & analyse détaillée
+    if diag.get("identification_details") or diag.get("analyse_detaillee"):
+        with st.expander("🔬 Identification & analyse détaillée", expanded=True):
+            if diag.get("identification_details"):
+                st.markdown("**Identification :**")
+                st.write(diag["identification_details"])
+            if diag.get("analyse_detaillee"):
+                st.markdown("**Analyse :**")
+                st.write(diag["analyse_detaillee"])
+
+    # Conditions de culture
+    cc = diag.get("conditions_culture", {})
+    if cc:
+        st.markdown("#### 🌡️ Conditions de culture")
+        cca, ccb = st.columns(2)
+        cca.markdown(f"💧 **Arrosage**\n\n{cc.get('arrosage', '—')}")
+        cca.markdown(f"☀️ **Lumière**\n\n{cc.get('lumiere', '—')}")
+        ccb.markdown(f"🌡️ **Température / humidité**\n\n{cc.get('temperature_humidite', '—')}")
+        ccb.markdown(f"🪴 **Substrat / engrais**\n\n{cc.get('substrat_engrais', '—')}")
 
     # Problèmes détectés
     problemes = diag.get("problemes", [])
@@ -243,12 +302,25 @@ def afficher_diagnostic(diag: dict) -> None:
         for p in problemes:
             icone = COULEUR_GRAVITE.get(p.get("gravite", ""), "⚪")
             with st.expander(f"{icone} {p.get('nom', 'Problème')}  ·  Gravité : {p.get('gravite', '—')}"):
-                st.write(p.get("description", ""))
+                if p.get("symptomes"):
+                    st.markdown(f"**Symptômes :** {p['symptomes']}")
+                if p.get("cause"):
+                    st.markdown(f"**Cause probable :** {p['cause']}")
+                traitement = p.get("traitement", [])
+                if traitement:
+                    st.markdown("**Traitement :**")
+                    for t in traitement:
+                        st.markdown(f"- {t}")
+                terme = p.get("terme_recherche_image") or p.get("nom", "")
+                if terme:
+                    st.markdown(
+                        f"📷 [Voir des photos d'exemples de « {terme} »]({lien_images(terme)})"
+                    )
 
-    # Solutions
+    # Plan d'action
     solutions = diag.get("solutions", [])
     if solutions:
-        st.markdown("#### 💊 Solutions recommandées")
+        st.markdown("#### 💊 Plan d'action prioritaire")
         for i, s in enumerate(solutions, 1):
             st.markdown(f"**{i}.** {s}")
 
@@ -259,17 +331,53 @@ def afficher_diagnostic(diag: dict) -> None:
         for c in prevention:
             st.markdown(f"- {c}")
 
+    # Calendrier d'entretien
+    calendrier = diag.get("calendrier_entretien", [])
+    if calendrier:
+        st.markdown("#### 🗓️ Routine d'entretien")
+        for c in calendrier:
+            st.markdown(f"- {c}")
+
+    # Photos de référence de la plante
+    terme_plante = " ".join(x for x in [plante, nom_latin] if x).strip()
+    if terme_plante:
+        st.markdown(
+            f"🌿 [Voir des photos de référence de « {terme_plante} »]({lien_images(terme_plante)})"
+        )
+
     st.caption(
-        "⚠️ Diagnostic généré par une IA à titre indicatif. En cas de doute "
-        "sur une plante de valeur, consultez un professionnel."
+        "⚠️ Diagnostic généré par une IA à titre indicatif. En cas de doute sur une plante "
+        "de valeur, consultez un professionnel."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Gestion des photos (accumulation de plusieurs images)
+# --------------------------------------------------------------------------- #
+def _empreinte(image_bytes: bytes) -> str:
+    return hashlib.md5(image_bytes).hexdigest()
+
+
+def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
+    """Ajoute une photo à la sélection si elle n'y est pas déjà. Renvoie True si ajoutée."""
+    photos = st.session_state.setdefault("photos", [])
+    empreinte = _empreinte(image_bytes)
+    if any(p["id"] == empreinte for p in photos):
+        return False
+    if len(photos) >= MAX_PHOTOS:
+        return False
+    photos.append({"id": empreinte, "bytes": image_bytes, "media_type": media_type})
+    return True
 
 
 # --------------------------------------------------------------------------- #
 # Interface principale
 # --------------------------------------------------------------------------- #
 st.title("🌿 Plant Doctor")
-st.caption("Prenez une photo de votre plante — l'IA analyse sa santé et propose des solutions.")
+st.caption(
+    "Prenez plusieurs photos de votre plante (sous différents angles) — "
+    "l'IA analyse sa santé en détail et propose des solutions illustrées."
+)
 
 api_key = get_api_key()
 if not api_key:
@@ -281,7 +389,13 @@ if not api_key:
     )
     st.stop()
 
-# Choix de la source de l'image : appareil photo ou galerie
+st.session_state.setdefault("photos", [])
+
+st.markdown(
+    f"**Ajoutez jusqu'à {MAX_PHOTOS} photos** de la même plante "
+    "(vue d'ensemble, feuilles, tiges, racines, zones abîmées…)."
+)
+
 source = st.radio(
     "Source de la photo",
     ["📷 Appareil photo", "🖼️ Depuis la galerie"],
@@ -289,32 +403,54 @@ source = st.radio(
     label_visibility="collapsed",
 )
 
-image_bytes = None
-media_type = "image/jpeg"
-
 if source == "📷 Appareil photo":
     photo = st.camera_input("Prenez une photo de la plante")
     if photo is not None:
-        image_bytes = photo.getvalue()
-        media_type = photo.type or "image/jpeg"
+        if st.button("➕ Ajouter cette photo à l'analyse"):
+            if ajouter_photo(photo.getvalue(), photo.type or "image/jpeg"):
+                st.success("Photo ajoutée ✅")
+            else:
+                st.info(f"Photo déjà ajoutée ou maximum de {MAX_PHOTOS} atteint.")
 else:
-    fichier = st.file_uploader(
-        "Choisissez une photo",
+    fichiers = st.file_uploader(
+        "Choisissez une ou plusieurs photos",
         type=list(MEDIA_TYPES.keys()),
-        accept_multiple_files=False,
+        accept_multiple_files=True,
     )
-    if fichier is not None:
-        image_bytes = fichier.getvalue()
-        ext = fichier.name.rsplit(".", 1)[-1].lower()
-        media_type = MEDIA_TYPES.get(ext, "image/jpeg")
-        st.image(image_bytes, caption="Photo sélectionnée", use_container_width=True)
+    if fichiers:
+        ajoutees = 0
+        for fichier in fichiers:
+            ext = fichier.name.rsplit(".", 1)[-1].lower()
+            if ajouter_photo(fichier.getvalue(), MEDIA_TYPES.get(ext, "image/jpeg")):
+                ajoutees += 1
+        if ajoutees:
+            st.success(f"{ajoutees} photo(s) ajoutée(s) ✅")
 
-if image_bytes:
-    if st.button("🔬 Analyser la plante", type="primary"):
+# Galerie des photos sélectionnées
+photos = st.session_state.get("photos", [])
+if photos:
+    st.markdown(f"**{len(photos)} / {MAX_PHOTOS} photo(s) sélectionnée(s) :**")
+    cols = st.columns(min(len(photos), 4))
+    for i, p in enumerate(photos):
+        with cols[i % len(cols)]:
+            st.image(p["bytes"], use_container_width=True)
+            if st.button("🗑️ Retirer", key=f"del_{p['id']}"):
+                st.session_state["photos"] = [x for x in photos if x["id"] != p["id"]]
+                st.rerun()
+
+    col_a, col_b = st.columns(2)
+    lancer = col_a.button("🔬 Analyser la plante", type="primary")
+    if col_b.button("♻️ Tout effacer"):
+        st.session_state["photos"] = []
+        st.rerun()
+
+    if lancer:
         client = anthropic.Anthropic(api_key=api_key)
         try:
-            with st.spinner("Analyse en cours… 🌱"):
-                diagnostic = analyser_plante(client, image_bytes, media_type)
+            with st.spinner(f"Analyse de {len(photos)} photo(s) en cours… 🌱"):
+                diagnostic = analyser_plante(
+                    client, [(p["bytes"], p["media_type"]) for p in photos]
+                )
             st.divider()
             afficher_diagnostic(diagnostic)
         except anthropic.AuthenticationError:
@@ -324,6 +460,6 @@ if image_bytes:
         except anthropic.APIError as e:
             st.error(f"Erreur de l'API Claude : {e}")
         except (json.JSONDecodeError, KeyError):
-            st.error("La réponse de l'IA n'a pas pu être interprétée. Réessayez avec une autre photo.")
+            st.error("La réponse de l'IA n'a pas pu être interprétée. Réessayez avec d'autres photos.")
 else:
-    st.info("👆 Prenez ou choisissez une photo pour démarrer l'analyse.")
+    st.info("👆 Ajoutez au moins une photo pour démarrer l'analyse.")

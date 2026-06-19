@@ -10,11 +10,13 @@ son état de santé, détecte maladies / parasites / carences, et propose des
 
 ## ✨ Fonctionnalités
 
-- 📷 Prise de photo directe via l'appareil photo (ou import depuis la galerie)
-- 🪴 Identification de la plante (nom commun + nom latin)
+- 📷 Prise de **plusieurs photos** (jusqu'à 4, sous différents angles) via l'appareil photo ou la galerie
+- 🪴 Identification de la plante (nom commun, nom latin, famille)
 - 🩺 Évaluation de l'état de santé avec score sur 100
+- 🔬 **Analyse détaillée** : identification, conditions de culture, symptômes & causes
 - 🔍 Détection des problèmes (maladies, parasites, carences, stress hydrique…)
-- 💊 Solutions priorisées + 🛡️ conseils de prévention
+- 🖼️ **Illustrations** : schéma dessiné par l'IA + liens vers des photos d'exemples
+- 💊 Plan d'action priorisé, 🛡️ prévention et 🗓️ routine d'entretien
 - 🇫🇷 Diagnostic entièrement en français
 
 ## 🚀 Lancer l'application
