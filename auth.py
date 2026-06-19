@@ -273,16 +273,16 @@ def ensure_seed_admin() -> Optional[str]:
 # Pages d'authentification (UI Streamlit)
 # --------------------------------------------------------------------------- #
 def render_auth_page() -> None:
-    """Affiche les formulaires de connexion et (optionnellement) d'inscription."""
-    st.markdown("## 🔐 Connexion")
+    """Affiche l'écran d'accueil avec deux onglets : Connexion et Inscription."""
+    import quotas
 
-    onglets = ["Se connecter"]
-    if registration_enabled():
-        onglets.append("Créer un compte")
-    tabs = st.tabs(onglets)
+    st.markdown("## 🌿 Bienvenue sur Plant Doctor")
+
+    # Deux onglets toujours visibles côte à côte
+    tab_login, tab_register = st.tabs(["🔑 Connexion", "📝 Inscription"])
 
     # --- Connexion ---
-    with tabs[0]:
+    with tab_login:
         with st.form("form_login"):
             email = st.text_input("E-mail", key="login_email")
             password = st.text_input("Mot de passe", type="password", key="login_pw")
@@ -296,10 +296,12 @@ def render_auth_page() -> None:
                 st.error(msg)
 
     # --- Inscription ---
-    if registration_enabled() and len(tabs) > 1:
-        import quotas
-        with tabs[1]:
-            st.caption("Votre compte sera activé après validation par un administrateur.")
+    with tab_register:
+        if not registration_enabled():
+            st.info("ℹ️ Les inscriptions sont actuellement fermées. "
+                    "Contactez un administrateur pour obtenir un compte.")
+        else:
+            st.caption("Créez votre compte. Il sera activé après validation par un administrateur.")
             with st.form("form_register"):
                 full_name = st.text_input("Nom complet", key="reg_name")
                 email_r = st.text_input("E-mail", key="reg_email")
