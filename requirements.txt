@@ -6,3 +6,4 @@ streamlit-back-camera-input
 fpdf2
 bcrypt
 psycopg2-binary
+Pillow
