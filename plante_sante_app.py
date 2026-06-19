@@ -61,8 +61,8 @@ def _thumb_settings() -> tuple[int, int]:
     return max(200, min(2000, max_side)), max(30, min(95, quality))
 
 
-def _thumbnail_b64(image_bytes: bytes) -> str:
-    """Réduit/compresse une image et la renvoie en base64 (JPEG) pour le stockage."""
+def _thumbnail_bytes(image_bytes: bytes) -> bytes:
+    """Réduit/compresse une image et renvoie les octets JPEG."""
     from PIL import Image
 
     max_side, quality = _thumb_settings()
@@ -70,7 +70,32 @@ def _thumbnail_b64(image_bytes: bytes) -> str:
     img.thumbnail((max_side, max_side))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
+
+
+def _thumbnail_b64(image_bytes: bytes) -> str:
+    """Miniature JPEG encodée en base64 (pour le stockage en base)."""
+    return base64.b64encode(_thumbnail_bytes(image_bytes)).decode("ascii")
+
+
+def _photos_pour_pdf() -> list[bytes]:
+    """Octets des photos à inclure dans le PDF (revue d'historique ou photos courantes)."""
+    thumbs = st.session_state.get("hist_thumbs")
+    if thumbs:
+        out = []
+        for t in thumbs:
+            try:
+                out.append(base64.b64decode(t))
+            except Exception:
+                pass
+        return out
+    out = []
+    for p in st.session_state.get("photos", []):
+        try:
+            out.append(_thumbnail_bytes(p["bytes"]))
+        except Exception:
+            pass
+    return out
 
 
 def _slug(s: str) -> str:
@@ -101,7 +126,13 @@ def _export_zip_pdfs(uid: int) -> bytes:
                 continue
             try:
                 diag = json.loads(full["diagnostic"])
-                pdf = generer_pdf(diag)
+                imgs = []
+                for t in json.loads(full.get("thumbnails") or "[]"):
+                    try:
+                        imgs.append(base64.b64decode(t))
+                    except Exception:
+                        pass
+                pdf = generer_pdf(diag, imgs)
             except Exception:
                 continue
             date = (r.get("created_at") or "")[:10]
@@ -232,6 +263,7 @@ T = {
         "reminder_hint": "Créez un rappel récurrent à ajouter au calendrier de votre téléphone.",
         "reminder_every": "Arroser tous les (jours) :", "dl_ics": "🔔 Télécharger le rappel (.ics)", "water_event": "💧 Arroser",
         "sec_hist": "📅 Historique des analyses", "hist_review": "Revoir", "hist_clear": "🗑️ Vider l'historique",
+        "sec_photos": "📸 Photos analysées",
     },
     "en": {
         "hero_sub": "Photograph your plant — the AI diagnoses its health and suggests illustrated solutions.",
@@ -276,6 +308,7 @@ T = {
         "reminder_hint": "Create a recurring reminder to add to your phone's calendar.",
         "reminder_every": "Water every (days):", "dl_ics": "🔔 Download the reminder (.ics)", "water_event": "💧 Water",
         "sec_hist": "📅 Analysis history", "hist_review": "View again", "hist_clear": "🗑️ Clear history",
+        "sec_photos": "📸 Analyzed photos",
     },
     "de": {
         "hero_sub": "Fotografieren Sie Ihre Pflanze — die KI diagnostiziert ihre Gesundheit und schlägt illustrierte Lösungen vor.",
@@ -320,6 +353,7 @@ T = {
         "reminder_hint": "Erstellen Sie eine wiederkehrende Erinnerung für den Kalender Ihres Telefons.",
         "reminder_every": "Gießen alle (Tage):", "dl_ics": "🔔 Erinnerung herunterladen (.ics)", "water_event": "💧 Gießen",
         "sec_hist": "📅 Analyseverlauf", "hist_review": "Erneut ansehen", "hist_clear": "🗑️ Verlauf löschen",
+        "sec_photos": "📸 Analysierte Fotos",
     },
 }
 
@@ -561,9 +595,10 @@ def generer_ics(plante: str, jours: int) -> bytes:
     return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
-def generer_pdf(diag: dict) -> bytes:
+def generer_pdf(diag: dict, photos: list = None) -> bytes:
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
+    from PIL import Image
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -588,6 +623,28 @@ def generer_pdf(diag: dict) -> bytes:
         pdf.set_font("Helvetica", "", 11)
         _line("  - " + txt, 6)
 
+    def grille_photos(images):
+        """Insère les photos analysées en grille (2 colonnes)."""
+        titre(tr("sec_photos"))
+        col_w, gap = 85, 10
+        x0 = pdf.l_margin
+        y = pdf.get_y()
+        max_h = 0
+        for i, b in enumerate(images[:4]):
+            col = i % 2
+            if col == 0 and i > 0:
+                y += max_h + 4
+                max_h = 0
+            try:
+                im = Image.open(io.BytesIO(b))
+                w0, h0 = im.size
+                h = col_w * h0 / w0
+                pdf.image(io.BytesIO(b), x=x0 + col * (col_w + gap), y=y, w=col_w, h=h)
+                max_h = max(max_h, h)
+            except Exception:
+                continue
+        pdf.set_y(y + max_h + 6)
+
     titre("Plant Doctor - Diagnostic", 18)
     sous = diag.get("plante", "Plante")
     if diag.get("nom_latin"):
@@ -601,6 +658,9 @@ def generer_pdf(diag: dict) -> bytes:
     if diag.get("resume"):
         para(diag["resume"])
     pdf.ln(2)
+
+    if photos:
+        grille_photos(photos)
 
     if diag.get("identification_details"):
         titre(tr("sec_ident")); para(diag["identification_details"])
@@ -1020,7 +1080,7 @@ if diagnostic:
     # Photos stockées (lorsqu'on revoit une analyse de l'historique)
     _thumbs = st.session_state.get("hist_thumbs")
     if _thumbs:
-        st.markdown("**📸 Photos analysées**")
+        st.markdown(f"**{tr('sec_photos')}**")
         tcols = st.columns(min(len(_thumbs), 4))
         for i, b64 in enumerate(_thumbs):
             try:
@@ -1033,9 +1093,9 @@ if diagnostic:
     if diagnostic.get("est_une_plante", True):
         plante = diagnostic.get("plante") or "plante"
 
-        # Export PDF
+        # Export PDF (avec les photos analysées)
         try:
-            pdf_bytes = generer_pdf(diagnostic)
+            pdf_bytes = generer_pdf(diagnostic, _photos_pour_pdf())
             nom = "".join(c for c in plante.lower().replace(" ", "_") if c.isalnum() or c == "_") or "plante"
             st.download_button(tr("dl_pdf"), data=pdf_bytes, file_name=f"diagnostic_{nom}.pdf", mime="application/pdf")
         except Exception as e:  # noqa: BLE001
