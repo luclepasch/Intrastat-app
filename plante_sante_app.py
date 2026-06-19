@@ -38,7 +38,7 @@ st.set_page_config(
 
 MODEL = "claude-opus-4-8"
 MAX_PHOTOS = 4
-VERSION = "1.4"
+VERSION = "1.5"
 VERSION_DATE = "juin 2026"
 
 st.markdown(
@@ -274,6 +274,15 @@ SCHEMA = {
             "description": "Routine d'entretien recommandée (gestes réguliers).",
             "items": {"type": "string"},
         },
+        "astuces_grand_mere": {
+            "type": "array",
+            "description": (
+                "Remèdes et astuces naturels traditionnels ('de grand-mère') adaptés à cette "
+                "plante : marc de café, coquilles d'œuf, savon noir, peau de banane, eau de "
+                "cuisson, purin d'ortie, etc. Explique brièvement l'usage pour chaque astuce."
+            ),
+            "items": {"type": "string"},
+        },
         "illustration_svg": {
             "type": "string",
             "description": (
@@ -292,7 +301,7 @@ SCHEMA = {
         "est_une_plante", "plante", "nom_latin", "famille", "etat_general",
         "score_sante", "resume", "identification_details", "analyse_detaillee",
         "conditions_culture", "problemes", "solutions", "prevention",
-        "calendrier_entretien", "illustration_svg", "confiance",
+        "calendrier_entretien", "astuces_grand_mere", "illustration_svg", "confiance",
     ],
     "additionalProperties": False,
 }
@@ -306,7 +315,8 @@ SYSTEM_PROMPT = (
     "Tu proposes des solutions concrètes, réalisables par un particulier, ainsi que "
     "des conseils d'arrosage précis (fréquence, méthode, signes de manque/d'excès) et "
     "des recommandations de substrats adaptés à l'espèce (mélange idéal, composants "
-    "conseillés et à éviter). "
+    "conseillés et à éviter), ainsi que des astuces naturelles traditionnelles "
+    "('de grand-mère') pertinentes pour cette plante. "
     "Sois précis, pédagogique et bienveillant. Réponds toujours en français. "
     "Si les images ne contiennent pas de plante, indique-le via 'est_une_plante'. "
     "Base ton diagnostic uniquement sur ce qui est visible ; ajuste ta confiance selon la "
@@ -518,6 +528,14 @@ def afficher_diagnostic(diag: dict) -> None:
         st.markdown("#### 🗓️ Routine d'entretien")
         for c in calendrier:
             st.markdown(f"- {c}")
+
+    # Astuces de grand-mère
+    astuces = diag.get("astuces_grand_mere", [])
+    if astuces:
+        st.markdown("#### 👵 Astuces de grand-mère")
+        st.caption("Remèdes naturels et traditionnels, à utiliser avec modération.")
+        for a in astuces:
+            st.markdown(f"- {a}")
 
     # Photos de référence de la plante
     terme_plante = " ".join(x for x in [plante, nom_latin] if x).strip()
