@@ -913,14 +913,16 @@ def ajouter_photo(image_bytes: bytes, media_type: str) -> bool:
 # Interface
 # --------------------------------------------------------------------------- #
 # Sélecteur de langue : bouton 🌐 (globe) ouvrant un menu (popover)
+DRAPEAUX = {"fr": "🇫🇷", "en": "🇬🇧", "de": "🇩🇪"}
 st.session_state.setdefault("lang", "fr")
 _, col_globe = st.columns([5, 1])
 with col_globe:
-    with st.popover("🌐", use_container_width=True):
+    with st.popover(f"🌐 {DRAPEAUX.get(st.session_state['lang'], '')}", use_container_width=True):
         st.caption("🌍 Langue / Language / Sprache")
         for nom, code in LANGUES.items():
             actif = "✅ " if code == st.session_state["lang"] else ""
-            if st.button(f"{actif}{nom}", key=f"setlang_{code}", use_container_width=True):
+            drapeau = DRAPEAUX.get(code, "")
+            if st.button(f"{actif}{drapeau} {nom}", key=f"setlang_{code}", use_container_width=True):
                 st.session_state["lang"] = code
                 st.rerun()
 
