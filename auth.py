@@ -80,8 +80,15 @@ def _valid_password(pw: str) -> bool:
 # Inscription
 # --------------------------------------------------------------------------- #
 def register_user(email: str, password: str, full_name: str = "",
-                  role: str = "USER") -> tuple[bool, str]:
-    """Crée un nouvel utilisateur. Renvoie (succès, message)."""
+                  role: str = "USER", plan: str = "FREE",
+                  active: bool = True) -> tuple[bool, str]:
+    """Crée un nouvel utilisateur. Renvoie (succès, message).
+
+    `active=False` crée un compte EN ATTENTE de validation par un administrateur,
+    et notifie l'admin par e-mail (si SMTP configuré).
+    """
+    import quotas  # plans disponibles
+
     email = (email or "").strip().lower()
     if not _valid_email(email):
         return False, "Adresse e-mail invalide."
@@ -89,10 +96,22 @@ def register_user(email: str, password: str, full_name: str = "",
         return False, f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LEN} caractères."
     if role not in ROLES:
         role = "USER"
+    if plan not in quotas.PLANS:
+        plan = "FREE"
     if db.get_user_by_email(email):
         return False, "Un compte existe déjà avec cette adresse e-mail."
 
-    db.create_user(email, hash_password(password), full_name, role, is_active=True)
+    db.create_user(email, hash_password(password), full_name, role,
+                   is_active=active, plan=plan)
+
+    if not active:
+        try:
+            import mailer
+            mailer.notify_admin_new_registration(email, full_name, plan)
+        except Exception:
+            pass  # l'absence d'e-mail ne bloque pas l'inscription
+        return True, "Inscription enregistrée."
+
     return True, "Compte créé avec succès."
 
 
@@ -121,7 +140,8 @@ def login(email: str, password: str) -> tuple[bool, str]:
     if not user:
         return False, generic_err
     if not int(user.get("is_active", 1)):
-        return False, "Ce compte est désactivé. Contactez un administrateur."
+        return False, ("Compte en attente de validation par un administrateur, "
+                       "ou désactivé. Réessayez plus tard.")
     if _is_locked(user):
         return False, (f"Compte temporairement verrouillé après plusieurs échecs. "
                        f"Réessayez dans quelques minutes.")
@@ -277,19 +297,26 @@ def render_auth_page() -> None:
 
     # --- Inscription ---
     if registration_enabled() and len(tabs) > 1:
+        import quotas
         with tabs[1]:
+            st.caption("Votre compte sera activé après validation par un administrateur.")
             with st.form("form_register"):
                 full_name = st.text_input("Nom complet", key="reg_name")
                 email_r = st.text_input("E-mail", key="reg_email")
                 pw1 = st.text_input("Mot de passe", type="password", key="reg_pw1")
                 pw2 = st.text_input("Confirmer le mot de passe", type="password", key="reg_pw2")
+                plan = st.selectbox("Formule souhaitée", quotas.PLANS, key="reg_plan")
                 submit_r = st.form_submit_button("Créer mon compte")
             if submit_r:
                 if pw1 != pw2:
                     st.error("Les deux mots de passe ne correspondent pas.")
                 else:
-                    ok, msg = register_user(email_r, pw1, full_name, role="USER")
+                    ok, msg = register_user(email_r, pw1, full_name, role="USER",
+                                            plan=plan, active=False)
                     if ok:
-                        st.success(msg + " Vous pouvez maintenant vous connecter.")
+                        st.success(
+                            "✅ Inscription enregistrée ! Votre compte sera actif "
+                            "après validation par un administrateur."
+                        )
                     else:
                         st.error(msg)

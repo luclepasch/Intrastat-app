@@ -15,12 +15,32 @@ import streamlit as st
 
 import auth
 import database as db
+import quotas
 
 
 # --------------------------------------------------------------------------- #
 # Onglet : Tableau de bord
 # --------------------------------------------------------------------------- #
 def _render_dashboard() -> None:
+    # --- Inscriptions en attente de validation ---
+    pending = db.list_pending_users()
+    if pending:
+        st.markdown(f"### 🕐 Inscriptions en attente ({len(pending)})")
+        for u in pending:
+            cols = st.columns([4, 1, 1])
+            cols[0].markdown(
+                f"**{u['email']}** · {u.get('full_name') or '—'} · "
+                f"formule **{u.get('plan') or 'FREE'}**"
+            )
+            if cols[1].button("✅ Approuver", key=f"appr_{u['id']}"):
+                db.set_active(u["id"], True)
+                st.success(f"{u['email']} approuvé.")
+                st.rerun()
+            if cols[2].button("✖️ Rejeter", key=f"rej_{u['id']}"):
+                db.delete_user(u["id"])
+                st.rerun()
+        st.divider()
+
     st.markdown("### 📊 Vue d'ensemble")
 
     s = db.users_summary()
@@ -113,12 +133,15 @@ def _render_users() -> None:
             c1, c2 = st.columns(2)
             email = c1.text_input("E-mail")
             full_name = c2.text_input("Nom complet")
-            c3, c4 = st.columns(2)
+            c3, c4, c5 = st.columns(3)
             password = c3.text_input("Mot de passe", type="password")
             role = c4.selectbox("Rôle", auth.ROLES, index=auth.ROLES.index("USER"))
+            plan = c5.selectbox("Formule", quotas.PLANS, index=quotas.PLANS.index("FREE"))
             ok = st.form_submit_button("Créer")
         if ok:
-            success, msg = auth.register_user(email, password, full_name, role)
+            # Compte créé par l'admin : actif immédiatement
+            success, msg = auth.register_user(email, password, full_name, role,
+                                              plan=plan, active=True)
             if success:
                 st.success(msg)
                 st.rerun()
@@ -135,7 +158,8 @@ def _render_users() -> None:
         badge = "🟢" if actif else "🔴"
         with st.expander(f"{badge} {u['email']}  ·  {u['role']}"):
             st.markdown(
-                f"**ID :** {u['id']}  ·  **Nom :** {u.get('full_name') or '—'}  \n"
+                f"**ID :** {u['id']}  ·  **Nom :** {u.get('full_name') or '—'}  ·  "
+                f"**Formule :** {u.get('plan') or 'FREE'}  \n"
                 f"**Créé le :** {u.get('created_at') or '—'}  ·  "
                 f"**Dernière connexion :** {u.get('last_login_at') or '—'}  \n"
                 f"**Échecs de connexion :** {u.get('failed_attempts', 0)}"
@@ -155,18 +179,27 @@ def _render_users() -> None:
                     st.success(f"Rôle mis à jour : {nouveau_role}")
                     st.rerun()
 
-            # Activation / désactivation
+            # Formule (plan) — définit les quotas par défaut
             with col2:
-                if est_soi_meme:
-                    st.info("Vous ne pouvez pas désactiver votre propre compte.")
-                elif actif:
-                    if st.button("🔴 Désactiver", key=f"deact_{u['id']}"):
-                        db.set_active(u["id"], False)
-                        st.rerun()
-                else:
-                    if st.button("🟢 Activer", key=f"act_{u['id']}"):
-                        db.set_active(u["id"], True)
-                        st.rerun()
+                plan_actuel = u.get("plan") or "FREE"
+                idx = quotas.PLANS.index(plan_actuel) if plan_actuel in quotas.PLANS else 0
+                nouveau_plan = st.selectbox("Formule", quotas.PLANS, index=idx, key=f"plan_{u['id']}")
+                if st.button("Appliquer la formule", key=f"plan_btn_{u['id']}"):
+                    db.set_user_plan(u["id"], nouveau_plan)
+                    st.success(f"Formule mise à jour : {nouveau_plan}")
+                    st.rerun()
+
+            # Activation / désactivation
+            if est_soi_meme:
+                st.info("Vous ne pouvez pas désactiver votre propre compte.")
+            elif actif:
+                if st.button("🔴 Désactiver", key=f"deact_{u['id']}"):
+                    db.set_active(u["id"], False)
+                    st.rerun()
+            else:
+                if st.button("🟢 Activer le compte", key=f"act_{u['id']}"):
+                    db.set_active(u["id"], True)
+                    st.rerun()
 
             # Reset mot de passe
             with st.form(f"reset_{u['id']}"):
