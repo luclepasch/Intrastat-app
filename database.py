@@ -131,6 +131,30 @@ def init_db() -> None:
         """
     )
 
+    # Colonnes de quota (ajoutées de façon idempotente pour les bases existantes)
+    for col in ("quota_day", "quota_week", "quota_month", "quota_year"):
+        _safe_add_column("users", f"{col} INTEGER")
+
+    # Journal d'utilisation : une ligne par analyse effectuée
+    usage_id = "id BIGSERIAL PRIMARY KEY" if _IS_PG else "id INTEGER PRIMARY KEY AUTOINCREMENT"
+    _run(
+        f"""
+        CREATE TABLE IF NOT EXISTS usage_log (
+            {usage_id},
+            user_id    INTEGER NOT NULL,
+            created_at TEXT
+        )
+        """
+    )
+
+
+def _safe_add_column(table: str, coldef: str) -> None:
+    """Ajoute une colonne si elle n'existe pas déjà (compatible SQLite/PG)."""
+    try:
+        _run(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+    except Exception:
+        pass  # la colonne existe déjà
+
 
 # --------------------------------------------------------------------------- #
 # CRUD utilisateurs
@@ -221,3 +245,32 @@ def reset_failed(user_id: int) -> None:
 def set_lock(user_id: int, locked_until_iso: Optional[str]) -> None:
     _run("UPDATE users SET locked_until = ? WHERE id = ?",
          (locked_until_iso, user_id))
+
+
+# --------------------------------------------------------------------------- #
+# Quotas d'analyses
+# --------------------------------------------------------------------------- #
+def log_usage(user_id: int) -> None:
+    """Enregistre une analyse pour le décompte des quotas."""
+    _run("INSERT INTO usage_log (user_id, created_at) VALUES (?, ?)",
+         (user_id, _now()))
+
+
+def count_usage_since(user_id: int, since_iso: str) -> int:
+    """Nombre d'analyses d'un utilisateur depuis l'horodatage `since_iso`."""
+    row = _run(
+        "SELECT COUNT(*) AS n FROM usage_log WHERE user_id = ? AND created_at >= ?",
+        (user_id, since_iso), fetch="one",
+    )
+    return int(row["n"]) if row else 0
+
+
+def set_user_quota(user_id: int, day, week, month, year) -> None:
+    """Définit les quotas (None = pas de limite spécifique) d'un utilisateur."""
+    _run(
+        """UPDATE users
+           SET quota_day = ?, quota_week = ?, quota_month = ?, quota_year = ?,
+               updated_at = ?
+           WHERE id = ?""",
+        (day, week, month, year, _now(), user_id),
+    )

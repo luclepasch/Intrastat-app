@@ -13,6 +13,7 @@ import streamlit as st
 
 import auth
 import database as db
+import quotas
 
 
 @auth.require_role("USER")  # tout utilisateur authentifié (ADMIN inclus)
@@ -33,6 +34,10 @@ def render_profile() -> None:
         f"**Compte créé le :** {user.get('created_at') or '—'}  \n"
         f"**Dernière connexion :** {user.get('last_login_at') or '—'}"
     )
+
+    # Quota d'analyses
+    st.markdown("### 📊 Quota d'analyses")
+    st.write(quotas.quota_caption(user["id"]) or "Illimité")
 
     st.divider()
 
