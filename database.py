@@ -337,3 +337,70 @@ def set_user_quota(user_id: int, day, week, month, year) -> None:
            WHERE id = ?""",
         (day, week, month, year, _now(), user_id),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Statistiques (tableau de bord admin)
+# --------------------------------------------------------------------------- #
+def users_summary() -> dict:
+    """Synthèse des comptes : total, actifs, inactifs, admins, users, verrouillés."""
+    row = _run(
+        """SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS actifs,
+              SUM(CASE WHEN role = 'ADMIN' THEN 1 ELSE 0 END) AS admins,
+              SUM(CASE WHEN locked_until IS NOT NULL THEN 1 ELSE 0 END) AS verrouilles
+           FROM users""",
+        fetch="one",
+    )
+    total = int(row["total"] or 0)
+    actifs = int(row["actifs"] or 0)
+    admins = int(row["admins"] or 0)
+    return {
+        "total": total, "actifs": actifs, "inactifs": total - actifs,
+        "admins": admins, "users": total - admins,
+        "verrouilles": int(row["verrouilles"] or 0),
+    }
+
+
+def usage_total() -> int:
+    row = _run("SELECT COUNT(*) AS n FROM usage_log", fetch="one")
+    return int(row["n"] or 0) if row else 0
+
+
+def usage_global_since(since_iso: str) -> int:
+    row = _run("SELECT COUNT(*) AS n FROM usage_log WHERE created_at >= ?",
+               (since_iso,), fetch="one")
+    return int(row["n"] or 0) if row else 0
+
+
+def usage_by_day(since_iso: str) -> list[dict]:
+    """Analyses par jour depuis `since_iso` (jour au format AAAA-MM-JJ)."""
+    return _run(
+        """SELECT substr(created_at, 1, 10) AS jour, COUNT(*) AS n
+           FROM usage_log WHERE created_at >= ?
+           GROUP BY substr(created_at, 1, 10) ORDER BY jour""",
+        (since_iso,), fetch="all",
+    )
+
+
+def top_users_by_usage(limit: int = 10) -> list[dict]:
+    """Utilisateurs classés par nombre total d'analyses."""
+    return _run(
+        """SELECT u.email AS email, u.role AS role, COUNT(l.id) AS n
+           FROM users u LEFT JOIN usage_log l ON l.user_id = u.id
+           GROUP BY u.id, u.email, u.role
+           ORDER BY n DESC, u.email
+           LIMIT ?""",
+        (limit,), fetch="all",
+    )
+
+
+def recent_usage(limit: int = 15) -> list[dict]:
+    """Dernières analyses (email + horodatage)."""
+    return _run(
+        """SELECT u.email AS email, l.created_at AS created_at
+           FROM usage_log l JOIN users u ON u.id = l.user_id
+           ORDER BY l.created_at DESC LIMIT ?""",
+        (limit,), fetch="all",
+    )
