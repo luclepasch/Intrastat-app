@@ -170,7 +170,10 @@ def init_db() -> None:
             last_login_at  TEXT,
             failed_attempts INTEGER NOT NULL DEFAULT 0,
             locked_until   TEXT,
-            plan           TEXT DEFAULT 'FREE'
+            plan           TEXT DEFAULT 'FREE',
+            title          TEXT,
+            first_name     TEXT,
+            last_name      TEXT
         )
         """
     )
@@ -179,6 +182,8 @@ def init_db() -> None:
     for col in ("quota_day", "quota_week", "quota_month", "quota_year"):
         _safe_add_column("users", f"{col} INTEGER")
     _safe_add_column("users", "plan TEXT DEFAULT 'FREE'")
+    for col in ("title", "first_name", "last_name"):
+        _safe_add_column("users", f"{col} TEXT")
 
     # Journal d'utilisation : une ligne par analyse effectuée
     usage_id = "id BIGSERIAL PRIMARY KEY" if _IS_PG else "id INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -220,19 +225,39 @@ def _safe_add_column(table: str, coldef: str) -> None:
 # --------------------------------------------------------------------------- #
 # CRUD utilisateurs
 # --------------------------------------------------------------------------- #
+def _compose_full_name(title: str, first_name: str, last_name: str, fallback: str = "") -> str:
+    parts = [p.strip() for p in (title, first_name, last_name) if p and p.strip()]
+    return " ".join(parts) if parts else fallback.strip()
+
+
 def create_user(email: str, password_hash: str, full_name: str = "",
-                role: str = "USER", is_active: bool = True, plan: str = "FREE") -> int:
+                role: str = "USER", is_active: bool = True, plan: str = "FREE",
+                title: str = "", first_name: str = "", last_name: str = "") -> int:
     """Crée un utilisateur et renvoie son id."""
+    full_name = _compose_full_name(title, first_name, last_name, full_name)
     now = _now()
     _run(
         """INSERT INTO users (email, password_hash, full_name, role, is_active, plan,
+                              title, first_name, last_name,
                               created_at, updated_at, failed_attempts)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-        (email.lower().strip(), password_hash, full_name.strip(), role,
-         1 if is_active else 0, plan, now, now),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        (email.lower().strip(), password_hash, full_name, role,
+         1 if is_active else 0, plan, title.strip(), first_name.strip(),
+         last_name.strip(), now, now),
     )
     user = get_user_by_email(email)
     return user["id"] if user else -1
+
+
+def update_user_identity(user_id: int, title: str, first_name: str, last_name: str) -> str:
+    """Met à jour titre/prénom/nom (+ full_name) ; renvoie le nom complet."""
+    full_name = _compose_full_name(title, first_name, last_name)
+    _run(
+        """UPDATE users SET title = ?, first_name = ?, last_name = ?,
+               full_name = ?, updated_at = ? WHERE id = ?""",
+        (title.strip(), first_name.strip(), last_name.strip(), full_name, _now(), user_id),
+    )
+    return full_name
 
 
 def get_user_by_email(email: str) -> Optional[dict]:
