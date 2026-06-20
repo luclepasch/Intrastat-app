@@ -20,6 +20,7 @@ Configuration utile (st.secrets ou variables d'environnement) :
 """
 
 import runpy
+from datetime import datetime, timedelta
 
 import streamlit as st
 
@@ -31,6 +32,7 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
+import extra_streamlit_components as stx  # noqa: E402
 import auth          # noqa: E402
 import database as db  # noqa: E402
 import i18n           # noqa: E402
@@ -40,6 +42,7 @@ from contact import render_contact  # noqa: E402
 from disclaimer import render_disclaimer  # noqa: E402
 
 APP_FILE = "plante_sante_app.py"  # application métier à protéger
+COOKIE_NAME = "pd_auth"
 
 # --------------------------------------------------------------------------- #
 # Initialisation
@@ -72,6 +75,19 @@ def run_app() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# « Rester connecté » : restauration de session via cookie
+# --------------------------------------------------------------------------- #
+cookie_manager = stx.CookieManager()
+cookie_manager.get_all()  # charge les cookies du navigateur
+remember_token = cookie_manager.get(COOKIE_NAME)
+
+# Restaure la session depuis le cookie si la session Streamlit a été perdue
+if not auth.is_authenticated() and remember_token:
+    _u = auth.validate_remember_token(remember_token)
+    if _u:
+        auth.open_session_for(_u)
+
+# --------------------------------------------------------------------------- #
 # Garde d'authentification
 # --------------------------------------------------------------------------- #
 if not auth.is_authenticated():
@@ -81,6 +97,16 @@ if not auth.is_authenticated():
     st.stop()
 
 user = auth.get_current_user()
+
+# Émet le cookie « rester connecté » après une connexion (une seule fois)
+if remember_token is None and not st.session_state.get("_remember_set"):
+    _raw = auth.create_remember_token(user["id"])
+    cookie_manager.set(
+        COOKIE_NAME, _raw,
+        expires_at=datetime.utcnow() + timedelta(days=auth.REMEMBER_DAYS),
+        key="set_auth_cookie",
+    )
+    st.session_state["_remember_set"] = True
 st.session_state.setdefault("lang", "fr")  # langue par défaut
 st.session_state["_under_main"] = True     # le globe in-app est remplacé par la sidebar
 
@@ -117,6 +143,12 @@ with st.sidebar:
 
     st.divider()
     if st.button("🚪 Se déconnecter", key="btn_logout"):
+        auth.revoke_remember_token(remember_token)
+        try:
+            cookie_manager.delete(COOKIE_NAME, key="del_auth_cookie")
+        except Exception:
+            pass
+        st.session_state.pop("_remember_set", None)
         auth.logout()
         st.rerun()
 

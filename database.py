@@ -236,6 +236,18 @@ def init_db() -> None:
         """
     )
 
+    # Jetons « rester connecté » (cookie persistant)
+    _run(
+        """
+        CREATE TABLE IF NOT EXISTS remember_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            expires_at TEXT,
+            created_at TEXT
+        )
+        """
+    )
+
 
 def _existing_columns(table: str) -> set:
     """Renvoie l'ensemble des colonnes existantes d'une table (SQLite/PG)."""
@@ -550,6 +562,31 @@ def delete_analysis(analysis_id: int, user_id: int) -> None:
 
 def delete_all_analyses(user_id: int) -> None:
     _run("DELETE FROM analyses WHERE user_id = ?", (user_id,))
+
+
+# --------------------------------------------------------------------------- #
+# Jetons « rester connecté »
+# --------------------------------------------------------------------------- #
+def add_remember_token(token_hash: str, user_id: int, expires_iso: str) -> None:
+    _run(
+        """INSERT INTO remember_tokens (token_hash, user_id, expires_at, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (token_hash, user_id, expires_iso, _now()),
+    )
+
+
+def get_remember_token(token_hash: str) -> Optional[dict]:
+    return _run("SELECT * FROM remember_tokens WHERE token_hash = ?",
+                (token_hash,), fetch="one")
+
+
+def delete_remember_token(token_hash: str) -> None:
+    _run("DELETE FROM remember_tokens WHERE token_hash = ?", (token_hash,))
+
+
+def purge_expired_remember_tokens() -> None:
+    _run("DELETE FROM remember_tokens WHERE expires_at < ?",
+         (datetime.utcnow().isoformat(timespec="seconds"),))
 
 
 def count_stored_analyses() -> int:
