@@ -8,4 +8,3 @@ bcrypt
 psycopg2-binary
 Pillow
 extra-streamlit-components
-streamlit-float
