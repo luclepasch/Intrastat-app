@@ -11,6 +11,7 @@ import streamlit as st
 
 import auth
 import database as db
+import i18n
 
 try:
     import mailer
@@ -20,25 +21,25 @@ except Exception:  # pragma: no cover
 
 @auth.require_role("USER")  # tout utilisateur connecté
 def render_contact() -> None:
-    st.markdown("## 📨 Contact")
+    st.markdown(i18n.tr("contact_title"))
     user = auth.get_current_user()
-    st.caption("Une question, un problème ou une suggestion ? Écrivez-nous.")
+    st.caption(i18n.tr("contact_caption"))
 
     with st.form("contact_form"):
-        sujet = st.text_input("Sujet")
-        message = st.text_area("Message", height=180)
-        envoyer = st.form_submit_button("Envoyer")
+        sujet = st.text_input(i18n.tr("contact_subject"))
+        message = st.text_area(i18n.tr("contact_message"), height=180)
+        envoyer = st.form_submit_button(i18n.tr("contact_send"))
 
     if envoyer:
         if not message.strip():
-            st.error("Veuillez saisir un message.")
+            st.error(i18n.tr("contact_empty"))
             return
 
         admin = db.get_config("ADMIN_NOTIFY_EMAIL") or db.get_config("ADMIN_EMAIL")
         corps = (
             "Nouveau message via le formulaire de contact :\n\n"
             f"De     : {user.get('full_name') or '—'} <{user.get('email')}>\n"
-            f"Sujet  : {sujet or '(sans sujet)'}\n\n"
+            f"Sujet  : {sujet or i18n.tr('contact_no_subject')}\n\n"
             f"{message}"
         )
 
@@ -49,8 +50,8 @@ def render_contact() -> None:
             sent = ok
 
         if sent:
-            st.success("✅ Message envoyé. Merci, nous vous répondrons par e-mail.")
+            st.success(i18n.tr("contact_sent"))
         elif admin:
-            st.info(f"📧 Envoi automatique indisponible. Écrivez-nous directement à : **{admin}**")
+            st.info(i18n.tr("contact_fallback", admin=admin))
         else:
-            st.warning("Aucune adresse de contact n'est configurée pour le moment.")
+            st.warning(i18n.tr("contact_noaddr"))
