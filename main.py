@@ -33,7 +33,6 @@ st.set_page_config(
 )
 
 import extra_streamlit_components as stx  # noqa: E402
-from streamlit_float import float_init, float_css_helper  # noqa: E402
 import auth          # noqa: E402
 import database as db  # noqa: E402
 import i18n           # noqa: E402
@@ -41,8 +40,6 @@ from admin import render_admin  # noqa: E402
 from user_profile import render_profile  # noqa: E402
 from contact import render_contact  # noqa: E402
 from disclaimer import render_disclaimer  # noqa: E402
-
-float_init()
 
 APP_FILE = "plante_sante_app.py"  # application métier à protéger
 COOKIE_NAME = "pd_auth"
@@ -114,6 +111,16 @@ st.session_state.setdefault("lang", "fr")   # langue par défaut
 st.session_state.setdefault("nav_page", "accueil")
 st.session_state["_under_main"] = True      # le globe in-app est remplacé par la sidebar
 
+# --------------------------------------------------------------------------- #
+# Navigation via la barre du bas (liens HTML -> paramètres d'URL)
+# --------------------------------------------------------------------------- #
+# La barre du bas est un bloc HTML pur (liens <a href="?nav=...">) : robuste sur
+# tous les navigateurs mobiles, contrairement aux colonnes Streamlit.
+if "nav" in st.query_params:
+    st.session_state["nav_page"] = st.query_params.get("nav", "accueil")
+    st.session_state["camera_active"] = (st.query_params.get("cam") == "1")
+    st.query_params.clear()   # nettoie l'URL (déclenche un rerun)
+
 
 def _do_logout():
     auth.revoke_remember_token(remember_token)
@@ -147,7 +154,7 @@ def render_more():
         _do_logout()
 
 
-# Styles : barre du bas + marge pour ne pas masquer le contenu
+# Styles : barre du bas (HTML pur) + marge pour ne pas masquer le contenu
 st.markdown(
     """
     <style>
@@ -156,36 +163,31 @@ st.markdown(
         background: linear-gradient(135deg, #16a34a, #22c55e) !important;
         color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 700 !important;
       }
-      /* Force la barre du bas à rester sur UNE ligne (pas d'empilement mobile) */
-      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) {
-        display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
-        gap: .1rem !important; align-items: flex-end !important; overflow: visible !important;
-        width: 100% !important;
+      /* Barre de navigation fixe en bas (flexbox, compatible tous navigateurs) */
+      .pd-bottombar {
+        position: fixed; left: 0; bottom: 0; width: 100%; z-index: 9999;
+        display: flex; flex-direction: row; flex-wrap: nowrap;
+        justify-content: space-around; align-items: flex-end;
+        background: rgba(20, 39, 26, 0.97); backdrop-filter: blur(4px);
+        box-shadow: 0 -4px 16px rgba(0,0,0,.25);
+        padding: .3rem .3rem .4rem;
       }
-      /* Chaque onglet garde 20 % de largeur (ne se réduit pas à zéro) */
-      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) > div[data-testid="column"] {
-        flex: 1 1 20% !important; width: 20% !important; max-width: 20% !important;
-        min-width: 0 !important;
+      .pd-bottombar a {
+        flex: 1 1 0; min-width: 0; text-align: center; text-decoration: none;
+        color: #cfe8d6; font-size: .7rem; font-weight: 700; line-height: 1.15;
+        display: flex; flex-direction: column; align-items: center; gap: .15rem;
+        padding: .2rem 0;
       }
-      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) > div[data-testid="column"] > div {
-        width: 100% !important;
-      }
-      /* Onglets de la barre du bas (icône au-dessus du libellé) */
-      .st-key-bn_accueil button, .st-key-bn_diag button,
-      .st-key-bn_plantes button, .st-key-bn_plus button {
-        background: transparent !important; color: #cfe8d6 !important; border: none !important;
-        box-shadow: none !important; height: 3.2rem !important; font-size: .72rem !important;
-        font-weight: 700 !important; line-height: 1.15 !important; padding: .2rem 0 !important;
-        white-space: pre-line !important; transform: none !important;
-      }
-      .st-key-bn_accueil button:hover, .st-key-bn_diag button:hover,
-      .st-key-bn_plantes button:hover, .st-key-bn_plus button:hover { color: #fff !important; }
+      .pd-bottombar a:hover { color: #fff; }
+      .pd-bottombar a .ic { font-size: 1.3rem; }
       /* Bouton caméra central, surélevé et rond */
-      .st-key-bn_cam button {
-        background: linear-gradient(135deg, #16a34a, #22c55e) !important; color: #fff !important;
-        border: none !important; border-radius: 50% !important;
-        width: 4rem !important; height: 4rem !important; font-size: 1.5rem !important;
-        margin: -1.3rem auto 0 !important; box-shadow: 0 6px 16px rgba(22,163,74,.45) !important;
+      .pd-bottombar a.pd-cam { flex: 0 0 auto; }
+      .pd-bottombar a.pd-cam .ic {
+        background: linear-gradient(135deg, #16a34a, #22c55e); color: #fff;
+        width: 3.7rem; height: 3.7rem; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        margin-top: -1.5rem; font-size: 1.5rem;
+        box-shadow: 0 6px 16px rgba(22,163,74,.45);
       }
     </style>
     """,
@@ -225,33 +227,17 @@ else:  # accueil / diagnostic / plantes
     run_app()
 
 # --------------------------------------------------------------------------- #
-# Barre de navigation fixe en bas
+# Barre de navigation fixe en bas (HTML pur : liens vers ?nav=...)
 # --------------------------------------------------------------------------- #
-bottom_bar = st.container()
-with bottom_bar:
-    bcols = st.columns(5)
-    if bcols[0].button("🏠\nAccueil", key="bn_accueil", use_container_width=True):
-        st.session_state["nav_page"] = "accueil"
-        st.session_state["camera_active"] = False
-        st.rerun()
-    if bcols[1].button("🩺\nDiagnostic", key="bn_diag", use_container_width=True):
-        st.session_state["nav_page"] = "diagnostic"
-        st.rerun()
-    if bcols[2].button("📷", key="bn_cam", use_container_width=True):
-        st.session_state["nav_page"] = "accueil"
-        st.session_state["camera_active"] = True
-        st.rerun()
-    if bcols[3].button("🌱\nMes Plantes", key="bn_plantes", use_container_width=True):
-        st.session_state["nav_page"] = "plantes"
-        st.rerun()
-    if bcols[4].button("➕\nPlus", key="bn_plus", use_container_width=True):
-        st.session_state["nav_page"] = "plus"
-        st.rerun()
-
-bottom_bar.float(
-    float_css_helper(
-        bottom="0", left="0",
-        background="rgba(20, 39, 26, 0.97)", z_index="9999",
-        css="width:100%; padding:.1rem .4rem .3rem; box-shadow:0 -4px 16px rgba(0,0,0,.25); backdrop-filter:blur(4px);",
-    )
+st.markdown(
+    """
+    <div class="pd-bottombar">
+      <a href="?nav=accueil" target="_self"><span class="ic">🏠</span>Accueil</a>
+      <a href="?nav=diagnostic" target="_self"><span class="ic">🩺</span>Diagnostic</a>
+      <a class="pd-cam" href="?nav=accueil&amp;cam=1" target="_self"><span class="ic">📷</span></a>
+      <a href="?nav=plantes" target="_self"><span class="ic">🌱</span>Plantes</a>
+      <a href="?nav=plus" target="_self"><span class="ic">➕</span>Plus</a>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
