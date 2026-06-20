@@ -254,6 +254,7 @@ T = {
         "add_hint": "**Ajoutez jusqu'à {n} photos** de la même plante (vue d'ensemble, feuilles, tiges, racines, zones abîmées…).",
         "src_cam": "📷 Appareil photo", "src_gallery": "🖼️ Depuis la galerie",
         "cam_caption": "📱 Sur téléphone, la caméra **arrière** est utilisée. Sur ordinateur, la webcam.",
+        "cam_open": "📷 Activer l'appareil photo", "cam_close": "✖️ Fermer l'appareil photo",
         "add_photo_btn": "➕ Ajouter cette photo à l'analyse", "photo_added": "Photo ajoutée ✅",
         "photo_dup": "Photo déjà ajoutée ou maximum de {n} atteint.",
         "choose_photos": "Choisissez une ou plusieurs photos", "photos_added": "{n} photo(s) ajoutée(s) ✅",
@@ -299,6 +300,7 @@ T = {
         "add_hint": "**Add up to {n} photos** of the same plant (whole view, leaves, stems, roots, damaged areas…).",
         "src_cam": "📷 Camera", "src_gallery": "🖼️ From gallery",
         "cam_caption": "📱 On phones the **rear** camera is used. On computers, the webcam.",
+        "cam_open": "📷 Open the camera", "cam_close": "✖️ Close the camera",
         "add_photo_btn": "➕ Add this photo to the analysis", "photo_added": "Photo added ✅",
         "photo_dup": "Photo already added or maximum of {n} reached.",
         "choose_photos": "Choose one or more photos", "photos_added": "{n} photo(s) added ✅",
@@ -344,6 +346,7 @@ T = {
         "add_hint": "**Fügen Sie bis zu {n} Fotos** derselben Pflanze hinzu (Gesamtansicht, Blätter, Stängel, Wurzeln, beschädigte Stellen…).",
         "src_cam": "📷 Kamera", "src_gallery": "🖼️ Aus der Galerie",
         "cam_caption": "📱 Auf dem Handy wird die **Rückkamera** verwendet. Am Computer die Webcam.",
+        "cam_open": "📷 Kamera aktivieren", "cam_close": "✖️ Kamera schließen",
         "add_photo_btn": "➕ Dieses Foto zur Analyse hinzufügen", "photo_added": "Foto hinzugefügt ✅",
         "photo_dup": "Foto bereits hinzugefügt oder Maximum von {n} erreicht.",
         "choose_photos": "Wählen Sie ein oder mehrere Fotos", "photos_added": "{n} Foto(s) hinzugefügt ✅",
@@ -1025,9 +1028,8 @@ elif st.session_state["historique"]:
 
 st.markdown(tr("add_hint", n=MAX_PHOTOS))
 
-source = st.radio("src", [tr("src_cam"), tr("src_gallery")], horizontal=True, label_visibility="collapsed")
-
-if source == tr("src_cam"):
+# Caméra À LA DEMANDE : activée par le bouton 📷 (barre du bas) ou ici
+if st.session_state.get("camera_active"):
     st.caption(tr("cam_caption"))
     photo = back_camera_input(height=360, width=340, key="cam")
     if photo is not None:
@@ -1038,16 +1040,24 @@ if source == tr("src_cam"):
                 st.success(tr("photo_added"))
             else:
                 st.info(tr("photo_dup", n=MAX_PHOTOS))
+    if st.button(tr("cam_close")):
+        st.session_state["camera_active"] = False
+        st.rerun()
 else:
-    fichiers = st.file_uploader(tr("choose_photos"), type=list(MEDIA_TYPES.keys()), accept_multiple_files=True)
-    if fichiers:
-        ajoutees = 0
-        for fichier in fichiers:
-            data = fichier.getvalue()
-            if ajouter_photo(data, detecter_media_type(data)):
-                ajoutees += 1
-        if ajoutees:
-            st.success(tr("photos_added", n=ajoutees))
+    if st.button(tr("cam_open")):
+        st.session_state["camera_active"] = True
+        st.rerun()
+
+# Galerie : toujours disponible
+fichiers = st.file_uploader(tr("choose_photos"), type=list(MEDIA_TYPES.keys()), accept_multiple_files=True)
+if fichiers:
+    ajoutees = 0
+    for fichier in fichiers:
+        data = fichier.getvalue()
+        if ajouter_photo(data, detecter_media_type(data)):
+            ajoutees += 1
+    if ajoutees:
+        st.success(tr("photos_added", n=ajoutees))
 
 photos = st.session_state.get("photos", [])
 if photos:
