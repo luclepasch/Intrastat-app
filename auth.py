@@ -17,7 +17,9 @@ Sessions stockées dans st.session_state :
 from __future__ import annotations
 
 import functools
+import hashlib
 import re
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -34,6 +36,7 @@ TITRES = ("", "M.", "Mme", "Dr", "Pr")  # civilités disponibles
 MIN_PASSWORD_LEN = 8
 MAX_FAILED_ATTEMPTS = 5           # tentatives avant verrouillage
 LOCK_MINUTES = 15                 # durée du verrouillage
+REMEMBER_DAYS = 30                # durée du « rester connecté »
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -163,13 +166,57 @@ def login(email: str, password: str) -> tuple[bool, str]:
     # Succès : réinitialise les compteurs, met à jour last_login, ouvre la session
     db.reset_failed(user["id"])
     db.update_last_login(user["id"])
+    open_session_for(user)
+    return True, "Connexion réussie."
+
+
+def open_session_for(user: dict) -> None:
+    """Initialise la session pour un utilisateur (connexion ou cookie)."""
     st.session_state["is_authenticated"] = True
     st.session_state["user_id"] = user["id"]
     st.session_state["email"] = user["email"]
     st.session_state["role"] = user["role"]
     st.session_state["full_name"] = user.get("full_name") or ""
-    st.session_state["lang"] = user.get("lang") or "fr"  # langue préférée
-    return True, "Connexion réussie."
+    st.session_state["lang"] = user.get("lang") or "fr"
+
+
+# --------------------------------------------------------------------------- #
+# « Rester connecté » (jetons de cookie)
+# --------------------------------------------------------------------------- #
+def _hash_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def create_remember_token(user_id: int) -> str:
+    """Crée un jeton persistant (renvoie la valeur en clair à mettre en cookie)."""
+    raw = secrets.token_urlsafe(32)
+    expires = (datetime.utcnow() + timedelta(days=REMEMBER_DAYS)).isoformat(timespec="seconds")
+    db.add_remember_token(_hash_token(raw), user_id, expires)
+    return raw
+
+
+def validate_remember_token(raw: str) -> Optional[dict]:
+    """Renvoie l'utilisateur si le jeton de cookie est valide, sinon None."""
+    if not raw:
+        return None
+    row = db.get_remember_token(_hash_token(raw))
+    if not row:
+        return None
+    try:
+        if datetime.utcnow() > datetime.fromisoformat(row["expires_at"]):
+            db.delete_remember_token(_hash_token(raw))
+            return None
+    except (ValueError, TypeError):
+        pass
+    user = db.get_user_by_id(row["user_id"])
+    if not user or not int(user.get("is_active", 1)):
+        return None
+    return user
+
+
+def revoke_remember_token(raw: str) -> None:
+    if raw:
+        db.delete_remember_token(_hash_token(raw))
 
 
 def logout() -> None:
