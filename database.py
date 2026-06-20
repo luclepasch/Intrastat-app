@@ -48,6 +48,19 @@ DATABASE_URL = get_config("DATABASE_URL")
 
 _IS_PG = BACKEND in ("postgres", "postgresql", "pg")
 
+# Champs usuels de coordonnées (signalétique utilisateur) : (colonne, libellé)
+USER_DETAIL_FIELDS = [
+    ("phone", "Téléphone"),
+    ("mobile", "Mobile"),
+    ("company", "Société"),
+    ("job_title", "Fonction"),
+    ("address", "Adresse"),
+    ("postal_code", "Code postal"),
+    ("city", "Ville"),
+    ("country", "Pays"),
+]
+_DETAIL_COLS = tuple(c for c, _ in USER_DETAIL_FIELDS)
+
 
 # --------------------------------------------------------------------------- #
 # Connexion bas niveau
@@ -190,7 +203,7 @@ def init_db() -> None:
         ("first_name", "first_name TEXT"),
         ("last_name", "last_name TEXT"),
         ("lang", "lang TEXT DEFAULT 'fr'"),
-    ]
+    ] + [(c, f"{c} TEXT") for c, _ in USER_DETAIL_FIELDS]
     for col_name, coldef in migrations:
         if col_name not in existing:
             _safe_add_column("users", col_name, coldef)
@@ -327,6 +340,16 @@ def set_user_plan(user_id: int, plan: str) -> None:
 def update_user_lang(user_id: int, lang: str) -> None:
     _run("UPDATE users SET lang = ?, updated_at = ? WHERE id = ?",
          (lang, _now(), user_id))
+
+
+def update_user_details(user_id: int, values: dict) -> None:
+    """Met à jour les champs de coordonnées (colonnes autorisées uniquement)."""
+    cols = [c for c in _DETAIL_COLS if c in values]
+    if not cols:
+        return
+    set_clause = ", ".join(f"{c} = ?" for c in cols) + ", updated_at = ?"
+    params = [(values[c] or "").strip() for c in cols] + [_now(), user_id]
+    _run(f"UPDATE users SET {set_clause} WHERE id = ?", tuple(params))
 
 
 def list_pending_users() -> list[dict]:

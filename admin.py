@@ -183,6 +183,19 @@ def _render_users() -> None:
                     st.success("Identité mise à jour.")
                     st.rerun()
 
+            # Coordonnées (signalétique)
+            with st.form(f"details_{u['id']}"):
+                st.markdown("**Coordonnées**")
+                vals = {}
+                dcols = st.columns(2)
+                for i, (col, label) in enumerate(db.USER_DETAIL_FIELDS):
+                    vals[col] = dcols[i % 2].text_input(
+                        label, value=u.get(col) or "", key=f"d_{col}_{u['id']}")
+                if st.form_submit_button("💾 Enregistrer les coordonnées"):
+                    db.update_user_details(u["id"], vals)
+                    st.success("Coordonnées mises à jour.")
+                    st.rerun()
+
             est_soi_meme = current and current["id"] == u["id"]
             col1, col2 = st.columns(2)
 
