@@ -13,6 +13,7 @@ import streamlit as st
 
 import auth
 import database as db
+import i18n
 import quotas
 
 
@@ -38,6 +39,20 @@ def render_profile() -> None:
     # Formule & quota d'analyses
     st.markdown(f"### 💳 Formule : {user.get('plan') or 'FREE'}")
     st.write(quotas.quota_caption(user["id"]) or "Illimité")
+
+    st.divider()
+
+    # --- Langue préférée ---
+    st.markdown("### 🌐 Langue")
+    noms = list(i18n.LANGUES.keys())
+    codes = list(i18n.LANGUES.values())
+    cur = i18n.current_lang()
+    idx = codes.index(cur) if cur in codes else 0
+    choix = st.selectbox("Langue préférée", noms, index=idx, key="profile_lang")
+    if st.button("Enregistrer la langue", key="save_lang"):
+        i18n.set_language(i18n.LANGUES[choix], user["id"])
+        st.success("Langue enregistrée.")
+        st.rerun()
 
     st.divider()
 

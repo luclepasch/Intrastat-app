@@ -168,6 +168,7 @@ def login(email: str, password: str) -> tuple[bool, str]:
     st.session_state["email"] = user["email"]
     st.session_state["role"] = user["role"]
     st.session_state["full_name"] = user.get("full_name") or ""
+    st.session_state["lang"] = user.get("lang") or "fr"  # langue préférée
     return True, "Connexion réussie."
 
 

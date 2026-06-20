@@ -189,6 +189,7 @@ def init_db() -> None:
         ("title", "title TEXT"),
         ("first_name", "first_name TEXT"),
         ("last_name", "last_name TEXT"),
+        ("lang", "lang TEXT DEFAULT 'fr'"),
     ]
     for col_name, coldef in migrations:
         if col_name not in existing:
@@ -321,6 +322,11 @@ def update_role(user_id: int, role: str) -> None:
 def set_user_plan(user_id: int, plan: str) -> None:
     _run("UPDATE users SET plan = ?, updated_at = ? WHERE id = ?",
          (plan, _now(), user_id))
+
+
+def update_user_lang(user_id: int, lang: str) -> None:
+    _run("UPDATE users SET lang = ?, updated_at = ? WHERE id = ?",
+         (lang, _now(), user_id))
 
 
 def list_pending_users() -> list[dict]:

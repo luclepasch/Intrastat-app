@@ -33,6 +33,7 @@ st.set_page_config(
 
 import auth          # noqa: E402
 import database as db  # noqa: E402
+import i18n           # noqa: E402
 from admin import render_admin  # noqa: E402
 from user_profile import render_profile  # noqa: E402
 from contact import render_contact  # noqa: E402
@@ -80,14 +81,30 @@ if not auth.is_authenticated():
     st.stop()
 
 user = auth.get_current_user()
-st.session_state.setdefault("lang", "fr")  # langue par défaut (modifiable dans l'app)
+st.session_state.setdefault("lang", "fr")  # langue par défaut
+st.session_state["_under_main"] = True     # le globe in-app est remplacé par la sidebar
+
+# Style du bouton globe (popover) dans la barre latérale
+st.markdown(
+    """
+    <style>
+      div[data-testid="stPopover"] button {
+        background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+        color: #fff !important; border: none !important; border-radius: 12px !important;
+        font-weight: 700 !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # --------------------------------------------------------------------------- #
-# Barre latérale : utilisateur, navigation, déconnexion
+# Barre latérale : utilisateur, langue, navigation, déconnexion
 # --------------------------------------------------------------------------- #
 with st.sidebar:
     st.markdown(f"### 👤 {user['full_name'] or user['email']}")
     st.caption(f"Rôle : **{user['role']}**  ·  {user['email']}")
+    i18n.language_popover(user_id=user["id"], key="side_lang")
     st.divider()
 
     options = ["🌿 Analyses", "📅 Historique", "📨 Contact", "⚠️ Disclaimer", "👤 Mon profil"]
