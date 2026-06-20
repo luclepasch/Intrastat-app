@@ -150,8 +150,8 @@ def login(email: str, password: str) -> tuple[bool, str]:
         return False, ("Compte en attente de validation par un administrateur, "
                        "ou désactivé. Réessayez plus tard.")
     if _is_locked(user):
-        return False, (f"Compte temporairement verrouillé après plusieurs échecs. "
-                       f"Réessayez dans quelques minutes.")
+        return False, ("Compte temporairement verrouillé après plusieurs échecs. "
+                       "Réessayez dans quelques minutes.")
 
     if not verify_password(password, user["password_hash"]):
         # Compteur d'échecs + verrouillage éventuel

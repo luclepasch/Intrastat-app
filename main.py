@@ -218,6 +218,7 @@ st.markdown(
 components.html(
     """
     <script>
+      try {
       const head = window.parent.document.head;
       const metas = {
         "viewport": "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover",
@@ -236,6 +237,7 @@ components.html(
         }
         tag.setAttribute('content', content);
       }
+      } catch (e) { /* head du parent inaccessible : on ignore */ }
     </script>
     """,
     height=0,
