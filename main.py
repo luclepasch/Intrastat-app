@@ -158,11 +158,17 @@ st.markdown(
       }
       /* Force la barre du bas à rester sur UNE ligne (pas d'empilement mobile) */
       div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) {
-        flex-wrap: nowrap !important; gap: .1rem !important; align-items: flex-end !important;
-        overflow: visible !important;
+        display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
+        gap: .1rem !important; align-items: flex-end !important; overflow: visible !important;
+        width: 100% !important;
       }
+      /* Chaque onglet garde 20 % de largeur (ne se réduit pas à zéro) */
       div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) > div[data-testid="column"] {
-        flex: 1 1 0 !important; min-width: 0 !important; width: auto !important;
+        flex: 1 1 20% !important; width: 20% !important; max-width: 20% !important;
+        min-width: 0 !important;
+      }
+      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) > div[data-testid="column"] > div {
+        width: 100% !important;
       }
       /* Onglets de la barre du bas (icône au-dessus du libellé) */
       .st-key-bn_accueil button, .st-key-bn_diag button,
