@@ -156,6 +156,14 @@ st.markdown(
         background: linear-gradient(135deg, #16a34a, #22c55e) !important;
         color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 700 !important;
       }
+      /* Force la barre du bas à rester sur UNE ligne (pas d'empilement mobile) */
+      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) {
+        flex-wrap: nowrap !important; gap: .1rem !important; align-items: flex-end !important;
+        overflow: visible !important;
+      }
+      div[data-testid="stHorizontalBlock"]:has(.st-key-bn_cam) > div[data-testid="column"] {
+        flex: 1 1 0 !important; min-width: 0 !important; width: auto !important;
+      }
       /* Onglets de la barre du bas (icône au-dessus du libellé) */
       .st-key-bn_accueil button, .st-key-bn_diag button,
       .st-key-bn_plantes button, .st-key-bn_plus button {
