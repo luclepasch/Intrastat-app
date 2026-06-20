@@ -10,6 +10,10 @@ import streamlit as st
 
 LANG_DEFAUT = "fr"
 
+# Langues disponibles et drapeaux (partagés par toute l'application)
+LANGUES = {"Français": "fr", "English": "en", "Deutsch": "de"}
+DRAPEAUX = {"fr": "🇫🇷", "en": "🇬🇧", "de": "🇩🇪"}
+
 _DISCLAIMER_FR = """
 **Plant Doctor** fournit un diagnostic généré par une **intelligence artificielle**,
 à titre purement **informatif et indicatif**.
@@ -121,3 +125,29 @@ def tr(key: str, **kw) -> str:
     lang = current_lang()
     s = _T.get(lang, _T["fr"]).get(key) or _T["fr"].get(key, key)
     return s.format(**kw) if kw else s
+
+
+def set_language(code: str, user_id=None) -> None:
+    """Change la langue de session et la mémorise en base (si user_id fourni)."""
+    if code not in DRAPEAUX:
+        code = LANG_DEFAUT
+    st.session_state["lang"] = code
+    if user_id is not None:
+        try:
+            import database as db
+            db.update_user_lang(user_id, code)
+        except Exception:
+            pass
+
+
+def language_popover(user_id=None, key: str = "lang_pop") -> None:
+    """Bouton globe ouvrant un menu de choix de langue (avec drapeaux)."""
+    cur = current_lang()
+    with st.popover(f"🌐 {DRAPEAUX.get(cur, '')}", use_container_width=True):
+        st.caption("🌍 Langue / Language / Sprache")
+        for nom, code in LANGUES.items():
+            actif = "✅ " if code == cur else ""
+            if st.button(f"{actif}{DRAPEAUX.get(code, '')} {nom}",
+                         key=f"{key}_{code}", use_container_width=True):
+                set_language(code, user_id)
+                st.rerun()
