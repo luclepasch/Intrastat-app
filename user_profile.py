@@ -76,6 +76,20 @@ def render_profile() -> None:
 
     st.divider()
 
+    # --- Coordonnées (signalétique) ---
+    st.markdown("### 📇 Coordonnées")
+    with st.form("profile_details"):
+        vals = {}
+        dcols = st.columns(2)
+        for i, (col, label) in enumerate(db.USER_DETAIL_FIELDS):
+            vals[col] = dcols[i % 2].text_input(label, value=user.get(col) or "", key=f"pd_{col}")
+        if st.form_submit_button("Enregistrer les coordonnées"):
+            db.update_user_details(user["id"], vals)
+            st.success("Coordonnées enregistrées.")
+            st.rerun()
+
+    st.divider()
+
     # --- Changer le mot de passe ---
     st.markdown("### 🔑 Changer mon mot de passe")
     with st.form("profile_password"):
