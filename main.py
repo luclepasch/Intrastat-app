@@ -80,6 +80,7 @@ if not auth.is_authenticated():
     st.stop()
 
 user = auth.get_current_user()
+st.session_state.setdefault("lang", "fr")  # langue par défaut (modifiable dans l'app)
 
 # --------------------------------------------------------------------------- #
 # Barre latérale : utilisateur, navigation, déconnexion
