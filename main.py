@@ -33,6 +33,7 @@ st.set_page_config(
 )
 
 import extra_streamlit_components as stx  # noqa: E402
+import streamlit.components.v1 as components  # noqa: E402
 import auth          # noqa: E402
 import database as db  # noqa: E402
 import i18n           # noqa: E402
@@ -158,7 +159,22 @@ def render_more():
 st.markdown(
     """
     <style>
-      .block-container { padding-bottom: 6.5rem !important; }
+      /* --- Plein écran mobile : on masque le « chrome » Streamlit --- */
+      div[data-testid="stToolbar"] { display: none !important; }
+      div[data-testid="stDecoration"] { display: none !important; }
+      div[data-testid="stStatusWidget"] { display: none !important; }
+      #MainMenu { display: none !important; }
+      footer { display: none !important; }
+      header[data-testid="stHeader"] {
+        background: transparent !important; height: 0 !important;
+      }
+      /* On récupère l'espace en haut et on respecte l'encoche (safe-area) */
+      .block-container {
+        padding-top: max(1rem, env(safe-area-inset-top)) !important;
+        padding-bottom: calc(6.5rem + env(safe-area-inset-bottom)) !important;
+        padding-left: max(1rem, env(safe-area-inset-left)) !important;
+        padding-right: max(1rem, env(safe-area-inset-right)) !important;
+      }
       div[data-testid="stPopover"] button {
         background: linear-gradient(135deg, #16a34a, #22c55e) !important;
         color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 700 !important;
@@ -170,7 +186,7 @@ st.markdown(
         justify-content: space-around; align-items: flex-end;
         background: rgba(20, 39, 26, 0.97); backdrop-filter: blur(4px);
         box-shadow: 0 -4px 16px rgba(0,0,0,.25);
-        padding: .3rem .3rem .4rem;
+        padding: .3rem .3rem calc(.4rem + env(safe-area-inset-bottom));
       }
       .pd-bottombar a {
         flex: 1 1 0; min-width: 0; text-align: center; text-decoration: none;
@@ -192,6 +208,37 @@ st.markdown(
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+# --------------------------------------------------------------------------- #
+# Plein écran mobile (PWA) : balises <head> pour un affichage « standalone »
+# --------------------------------------------------------------------------- #
+# st.markdown n'écrit que dans le <body> ; on injecte donc les balises <meta>
+# dans le <head> du document parent via un petit script (idempotent).
+components.html(
+    """
+    <script>
+      const head = window.parent.document.head;
+      const metas = {
+        "viewport": "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover",
+        "apple-mobile-web-app-capable": "yes",
+        "mobile-web-app-capable": "yes",
+        "apple-mobile-web-app-status-bar-style": "black-translucent",
+        "apple-mobile-web-app-title": "Plant Doctor",
+        "theme-color": "#14271a"
+      };
+      for (const [name, content] of Object.entries(metas)) {
+        let tag = head.querySelector('meta[name="' + name + '"]');
+        if (!tag) {
+          tag = window.parent.document.createElement('meta');
+          tag.setAttribute('name', name);
+          head.appendChild(tag);
+        }
+        tag.setAttribute('content', content);
+      }
+    </script>
+    """,
+    height=0,
 )
 
 # --------------------------------------------------------------------------- #
