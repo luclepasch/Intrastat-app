@@ -958,7 +958,8 @@ if _hist_uid is not None:
     # Historique PERSISTANT (base de données) — survit aux reconnexions
     entrees = _db.list_analyses(_hist_uid, limit=50)
     if entrees:
-        with st.expander(f"{tr('sec_hist')} ({len(entrees)})"):
+        with st.expander(f"{tr('sec_hist')} ({len(entrees)})",
+                         expanded=st.session_state.get("focus_history", False)):
             for e in entrees:
                 date_aff = (e.get("created_at") or "")[:16].replace("T", " ")
                 cols = st.columns([1, 3.4, 1.2, 0.7], vertical_alignment="center")
