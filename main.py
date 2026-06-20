@@ -35,6 +35,8 @@ import auth          # noqa: E402
 import database as db  # noqa: E402
 from admin import render_admin  # noqa: E402
 from user_profile import render_profile  # noqa: E402
+from contact import render_contact  # noqa: E402
+from disclaimer import render_disclaimer  # noqa: E402
 
 APP_FILE = "plante_sante_app.py"  # application métier à protéger
 
@@ -87,10 +89,10 @@ with st.sidebar:
     st.caption(f"Rôle : **{user['role']}**  ·  {user['email']}")
     st.divider()
 
-    options = ["🌿 Application", "👤 Mon profil"]
+    options = ["🌿 Analyses", "📅 Historique", "📨 Contact", "⚠️ Disclaimer", "👤 Mon profil"]
     if user["role"] == "ADMIN":
         options.append("🛠️ Administration")
-    page = st.radio("Navigation", options, key="nav_page")
+    page = st.radio("☰ Menu", options, key="nav_page")
     if user["role"] == "ADMIN":
         # Indicateur de la base de données active (visible par les ADMIN)
         st.caption(f"🗄️ Base : **{db.BACKEND}**")
@@ -103,10 +105,17 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 # Routage
 # --------------------------------------------------------------------------- #
-page = st.session_state.get("nav_page", "🌿 Application")
+page = st.session_state.get("nav_page", "🌿 Analyses")
+# « Historique » ouvre l'app avec l'historique déplié
+st.session_state["focus_history"] = (page == "📅 Historique")
+
 if page == "🛠️ Administration" and user["role"] == "ADMIN":
     render_admin()
 elif page == "👤 Mon profil":
     render_profile()
-else:
+elif page == "📨 Contact":
+    render_contact()
+elif page == "⚠️ Disclaimer":
+    render_disclaimer()
+else:  # 🌿 Analyses ou 📅 Historique
     run_app()
